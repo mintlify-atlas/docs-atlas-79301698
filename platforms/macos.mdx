@@ -1,0 +1,55 @@
+---
+title: "macOS"
+description: "Running VulkanMod on macOS using bundled MoltenVK."
+---
+
+VulkanMod detects macOS via `SystemUtils.IS_OS_MAC_OSX` and initializes GLFW with `GLFW_PLATFORM_COCOA`. Vulkan support on macOS is provided through MoltenVK, which is bundled directly in the mod.
+
+## MoltenVK
+
+MoltenVK is a Vulkan implementation that translates Vulkan API calls to Apple's Metal graphics API. No separate installation is required — VulkanMod bundles the MoltenVK natives via LWJGL:
+
+- `lwjgl-vulkan:natives-macos` — Intel (x86_64)
+- `lwjgl-vulkan:natives-macos-arm64` — Apple Silicon (ARM64)
+
+Both architectures are supported out of the box.
+
+<Warning>
+  MoltenVK introduces a translation layer between Vulkan and Metal. Expect some
+  performance overhead compared to native Vulkan on Windows or Linux. macOS is
+  not the primary target platform for VulkanMod.
+</Warning>
+
+## Supported hardware
+
+| Hardware               | Architecture | Status     |
+| ---------------------- | ------------ | ---------- |
+| Apple Silicon (M-series) | ARM64      | Supported  |
+| Intel Mac              | x86_64       | Supported  |
+
+The correct native library is selected automatically at runtime based on the JVM architecture.
+
+## Setup
+
+<Steps>
+  <Step title="Install a compatible JVM">
+    Use a JVM that matches your Mac's architecture. For Apple Silicon, use an
+    ARM64 JVM (e.g., Azul Zulu for ARM64) for best performance. Avoid running
+    an x86_64 JVM under Rosetta 2 — it works but adds an extra translation
+    layer.
+  </Step>
+  <Step title="Install VulkanMod">
+    Install VulkanMod as a Fabric mod. The bundled MoltenVK natives are
+    extracted automatically; no Metal or Vulkan SDK installation is needed.
+  </Step>
+  <Step title="Launch Minecraft">
+    Start Minecraft. VulkanMod will log `Selecting Platform: MACOS` on startup,
+    confirming that `GLFW_PLATFORM_COCOA` was selected.
+  </Step>
+</Steps>
+
+<Note>
+  macOS does not expose a native Vulkan driver. All Vulkan functionality goes
+  through MoltenVK → Metal. Features that rely on Vulkan extensions not yet
+  supported by MoltenVK may not be available.
+</Note>

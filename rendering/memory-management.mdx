@@ -1,0 +1,252 @@
+---
+title: "Memory management"
+description: "How VulkanMod manages GPU memory using Vulkan Memory Allocator (VMA)."
+---
+
+Vulkan gives applications direct control over GPU memory allocation. Rather than implementing allocation strategies from scratch, VulkanMod uses the [Vulkan Memory Allocator (VMA)](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) library, accessed through LWJGL's `org.lwjgl.util.vma` bindings. All allocation and deallocation passes through a single VMA allocator handle stored in `Vulkan.allocator`.
+
+## VMA initialisation
+
+`Vulkan.createVma()` is called during `initVulkan`, after `DeviceManager.init` has selected a physical device and created the logical device:
+
+```java
+// Vulkan.java:321–341
+private static void createVma() {
+    VmaVulkanFunctions vulkanFunctions = VmaVulkanFunctions.calloc(stack);
+    vulkanFunctions.set(instance, DeviceManager.vkDevice);
+
+    VmaAllocatorCreateInfo allocatorCreateInfo = VmaAllocatorCreateInfo.calloc(stack);
+    allocatorCreateInfo.physicalDevice(DeviceManager.physicalDevice);
+    allocatorCreateInfo.device(DeviceManager.vkDevice);
+    allocatorCreateInfo.pVulkanFunctions(vulkanFunctions);
+    allocatorCreateInfo.instance(instance);
+    allocatorCreateInfo.vulkanApiVersion(VK_API_VERSION_1_2);
+
+    vmaCreateAllocator(allocatorCreateInfo, pAllocator);
+    allocator = pAllocator.get(0);
+}
+```
+
+The `VmaVulkanFunctions` struct is initialised by `vulkanFunctions.set(instance, vkDevice)`, which automatically resolves all required function pointers from the Vulkan instance and device. The allocator is destroyed in `Vulkan.cleanUp` via `vmaDestroyAllocator(allocator)`.
+
+## MemoryTypes
+
+`MemoryTypes.createMemoryTypes()` is called immediately after VMA initialisation. It enumerates the physical device's memory types and selects one instance each of a device-local type and a host-visible/coherent type.
+
+<Tabs>
+  <Tab title="Discrete GPU (primary path)">
+    On a discrete GPU with separate VRAM and system RAM, two types are selected:
+
+    | Static field | Vulkan property flags | Class |
+    |---|---|---|
+    | `MemoryTypes.GPU_MEM` | `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` | `DeviceLocalMemory` |
+    | `MemoryTypes.HOST_MEM` | `VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT \| HOST_COHERENT_BIT` | `HostCoherentMemory` |
+
+    `DeviceLocalMemory.createBuffer` allocates into VRAM with `VK_MEMORY_HEAP_DEVICE_LOCAL_BIT`. Uploading data to it requires a staging-buffer copy (see [StagingBuffer](#staging-buffer-pattern)).
+
+    `HostCoherentMemory.createBuffer` allocates host-visible/coherent memory — readable and writable by the CPU without explicit flushes. Used for staging buffers and uniform buffers.
+  </Tab>
+  <Tab title="Integrated / UMA (fallback path)">
+    If the primary selection fails (e.g. unified memory architecture), a second pass finds:
+
+    | Type | Flags | Class |
+    |---|---|---|
+    | `GPU_MEM` (fallback) | `DEVICE_LOCAL \| HOST_VISIBLE` | `DeviceMappableMemory` |
+    | `HOST_MEM` (fallback) | `HOST_VISIBLE \| HOST_COHERENT` | `HostLocalFallbackMemory` |
+
+    On UMA systems (most mobile GPUs, integrated Intel/AMD), device-local memory is directly mappable, so no staging copy is required. `DeviceMappableMemory` still goes through the same `createBuffer` path but with both flags set.
+
+    If no device-local memory can be found at all, `GPU_MEM` is set to the same instance as `HOST_MEM`.
+  </Tab>
+</Tabs>
+
+Each `MemoryType` subclass implements three methods:
+
+- `createBuffer(Buffer, size)` — allocates a `VkBuffer` via `MemoryManager.createBuffer`.
+- `copyToBuffer(Buffer, ByteBuffer, size, srcOffset, dstOffset)` — either memcpys directly (mappable) or enqueues a staging upload (device-local).
+- `mappable()` — returns whether CPU can write directly to the buffer's data pointer.
+
+## Buffer types
+
+<CardGroup cols={2}>
+  <Card title="Buffer (base)" icon="square">
+    Abstract base for all GPU buffers. Owns `id` (VkBuffer handle), `allocation` (VMA allocation handle), `bufferSize`, `usedBytes`, `offset`, and `dataPtr` (mapped CPU address, set only for mappable types).
+  </Card>
+  <Card title="StagingBuffer" icon="upload">
+    64 MB host-coherent buffer used as a CPU→GPU transfer intermediary. One instance per frame-in-flight. Usage flag: `VK_BUFFER_USAGE_TRANSFER_SRC_BIT`.
+  </Card>
+  <Card title="UniformBuffer" icon="table">
+    Host-coherent buffer for shader uniforms. Aligned to `minUniformBufferOffsetAlignment`. Usage flag: `VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT`.
+  </Card>
+  <Card title="VertexBuffer" icon="vector-square">
+    Device-local buffer holding terrain mesh vertex data. Uploaded via staging.
+  </Card>
+  <Card title="IndexBuffer" icon="list-ol">
+    Device-local buffer for index data. Contains pre-generated quad indices shared across all terrain draw calls.
+  </Card>
+  <Card title="IndirectBuffer" icon="arrow-right-arrow-left">
+    Holds `VkDrawIndexedIndirectCommand` structs built each frame by `DrawBuffers.buildDrawBatchesIndirect`. Allocated from `HOST_MEM` for direct CPU writes. Usage flag: `VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT`.
+  </Card>
+</CardGroup>
+
+## Staging buffer pattern
+
+Device-local (`GPU_MEM`) buffers cannot be written by the CPU. Data must be uploaded through a `StagingBuffer`:
+
+<Steps>
+  <Step title="Copy to staging">
+    The source `ByteBuffer` is `nmemcpy`'d into the staging buffer's mapped memory region at the current `usedBytes` offset.
+
+    ```java
+    // StagingBuffer.java:31–44
+    public void copyBuffer(int size, long scrPtr) {
+        if (size > this.bufferSize - this.usedBytes) {
+            submitUploads();  // flush if full
+        }
+        nmemcpy(this.dataPtr + this.usedBytes, scrPtr, size);
+        this.offset    = this.usedBytes;
+        this.usedBytes += size;
+    }
+    ```
+  </Step>
+
+  <Step title="Record transfer command">
+    `DeviceLocalMemory.copyToBuffer` calls `DeviceManager.getTransferQueue().copyBufferCmd(...)`, which records a `vkCmdCopyBuffer` from the staging buffer's offset to the destination device-local buffer's offset into the transfer queue command buffer.
+  </Step>
+
+  <Step title="Submit transfer">
+    `Renderer.submitUploads` submits the transfer command buffer to the dedicated transfer queue and adds it to the `Synchronization` fence list.
+  </Step>
+
+  <Step title="Fence wait">
+    `Renderer.waitFences` waits for all transfer fences before the graphics queue reads the uploaded data. The staging buffer is then reset (`usedBytes = 0`) so its space can be reused next frame.
+  </Step>
+</Steps>
+
+If the staging buffer fills before an explicit flush, `StagingBuffer.submitUploads` is called automatically, which submits all pending uploads and waits on the resulting fences before resetting:
+
+```java
+// StagingBuffer.java:57–64
+private void submitUploads() {
+    UploadManager.INSTANCE.submitUploads();
+    ImageUploadHelper.INSTANCE.submitCommands();
+    Synchronization.INSTANCE.waitFences();
+    this.reset();
+}
+```
+
+## MemoryManager and buffer lifecycle
+
+`MemoryManager` is a singleton (one per `framesNum`) that acts as the central registry for all live `VkBuffer` and `VulkanImage` objects, and handles deferred freeing.
+
+### Deferred free pattern
+
+Vulkan forbids destroying a buffer that is still in use by the GPU. VulkanMod resolves this by queueing buffers for destruction rather than destroying them immediately:
+
+```java
+// Buffer.java:59–61
+public void scheduleFree() {
+    MemoryManager.getInstance().addToFreeable(this);
+}
+```
+
+`addToFreeable` appends the buffer's `BufferInfo` record to `freeableBuffers[currentFrame]`. At the start of each frame, `MemoryManager.initFrame(frame)` is called, which:
+
+1. `freeBuffers(frame)` — calls `vmaDestroyBuffer` for every buffer queued for this frame slot. By the time frame `N` is started again, the GPU has finished all commands from the previous submission of frame `N`.
+2. `freeImages(frame)` — same pattern for `VulkanImage`.
+3. `doFrameOps(frame)` — executes `Runnable` callbacks registered via `addFrameOp` (e.g. pipeline cleanup scheduled mid-frame).
+4. `freeSegments(frame)` — releases `AreaBuffer` segments belonging to rebuilt or removed chunk sections.
+
+### Buffer creation
+
+`MemoryManager.createBuffer(Buffer, size, usage, properties)` calls `vmaCreateBuffer` with a `VkBufferCreateInfo` and a `VmaAllocationCreateInfo`:
+
+```java
+// MemoryManager.java:131–151
+public synchronized void createBuffer(Buffer buffer, long size, int usage, int properties) {
+    this.createBuffer(size, usage, properties, pBuffer, pAllocation);
+
+    buffer.setId(pBuffer.get(0));
+    buffer.setAllocation(pAllocation.get(0));
+    buffer.setBufferSize(size);
+
+    if ((properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
+        deviceMemory += size;
+    else
+        nativeMemory += size;
+
+    buffers.putIfAbsent(buffer.getId(), buffer);
+}
+```
+
+Tracked totals (`deviceMemory`, `nativeMemory`) are used by the debug screen to display GPU memory usage.
+
+### Buffer resize
+
+`Buffer.resizeBuffer(newSize)` calls `scheduleFree()` on the current allocation, then immediately allocates a fresh buffer at the new size:
+
+```java
+// Buffer.java:34–37
+public void resizeBuffer(long newSize) {
+    MemoryManager.getInstance().addToFreeable(this);
+    this.createBuffer(newSize);
+}
+```
+
+The old allocation is queued for deferred destruction; the buffer object is immediately usable with the new backing memory.
+
+## Frame queue size and memory scaling
+
+The `frameQueueSize` configuration option (exposed in the VulkanMod settings as "Frame Queue Size") determines `framesNum`. Every frame-indexed resource is allocated `framesNum` times:
+
+| Resource | Per-frame count |
+|---|---|
+| `StagingBuffer` (64 MB each) | `framesNum` |
+| Main `VkCommandBuffer` | `framesNum` |
+| Transfer `CommandBuffer` | `framesNum` |
+| `imageAvailable` semaphore | `framesNum` |
+| `renderFinished` semaphore | `framesNum` |
+| `inFlight` fence | `framesNum` |
+| `IndirectBuffer` | `framesNum` |
+| `DescriptorSets[]` (per pipeline) | `framesNum` slots |
+| `MemoryManager` free queues | `framesNum` slots |
+
+A higher `frameQueueSize` allows the CPU to record commands for the next frame while the GPU processes the current one, reducing GPU idle time at the cost of higher memory usage and increased input latency. A lower value reduces memory overhead and latency at the potential cost of CPU–GPU pipeline stalls.
+
+When `frameQueueSize` changes at runtime (via the settings menu), `Renderer.recreateSwapChain` tears down all frame-indexed resources and rebuilds them at the new count:
+
+```java
+// Renderer.java:554–568
+if (framesNum != newFramesNum) {
+    framesNum = newFramesNum;
+    MemoryManager.getInstance().freeAllBuffers();
+    MemoryManager.createInstance(newFramesNum);
+    createStagingBuffers();
+    allocateCommandBuffers();
+    Pipeline.recreateDescriptorSets(framesNum);
+    drawer.createResources(framesNum);
+}
+```
+
+<Warning>
+  `freeAllBuffers()` iterates through all `framesNum` frame slots and processes their queued frees immediately, bypassing the normal deferred mechanism. This is safe only because `recreateSwapChain` first calls `Vulkan.waitIdle()` to ensure the GPU has finished all in-flight work.
+</Warning>
+
+## Heap budget monitoring
+
+`MemoryManager.getHeapStats()` queries VMA's `vmaGetHeapBudgets` to obtain the current usage and budget for the GPU memory heap:
+
+```java
+// MemoryManager.java:324–336
+public String getHeapStats() {
+    VmaBudget.Buffer vmaBudgets = VmaBudget.calloc(
+        DeviceManager.memoryProperties.memoryHeapCount(), stack);
+    vmaGetHeapBudgets(ALLOCATOR, vmaBudgets);
+
+    VmaBudget vmaBudget = vmaBudgets.get(MemoryTypes.GPU_MEM.vkMemoryType.heapIndex());
+    return String.format("Device Memory Heap Usage: %d/%dMB",
+        bytesInMb(vmaBudget.usage()), bytesInMb(vmaBudget.budget()));
+}
+```
+
+This output appears in the debug screen alongside the tracked `deviceMemory` and `nativeMemory` totals maintained by `MemoryManager` itself.

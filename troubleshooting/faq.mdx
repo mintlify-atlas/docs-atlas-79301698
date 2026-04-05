@@ -1,0 +1,44 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about VulkanMod."
+---
+
+<AccordionGroup>
+  <Accordion title="Is VulkanMod just 'Minecraft on Vulkan' like Zink?">
+    No. VulkanMod is a **full rewrite of the Minecraft renderer**, not a translation layer like [Zink](https://docs.mesa3d.org/drivers/zink.html). Zink sits between OpenGL calls and Vulkan at the driver level — VulkanMod replaces the entire rendering pipeline inside Minecraft itself, introducing chunk culling algorithms, reduced CPU overhead, indirect draw mode, and other optimizations that a translation layer cannot provide.
+  </Accordion>
+
+  <Accordion title="Is VulkanMod compatible with OptiFine, Sodium, or Iris?">
+    No. VulkanMod replaces the entire renderer and is incompatible with mods that hook into OpenGL or Minecraft's default render pipeline — including OptiFine, Sodium, and Iris. See the [Incompatible mods](/troubleshooting/incompatible-mods) page for a full breakdown.
+  </Accordion>
+
+  <Accordion title="Does VulkanMod work server-side?">
+    No. VulkanMod is a **client-side only** mod. It modifies how Minecraft renders on your machine and has no effect on servers. You do not need to (and cannot) install it on a server.
+  </Accordion>
+
+  <Accordion title="Which Minecraft versions are supported?">
+    VulkanMod currently supports **Minecraft 1.21.9** and **1.21.10**. Fabric Loader 0.14.14 or newer is required.
+  </Accordion>
+
+  <Accordion title="Where is the config file?">
+    VulkanMod stores its settings at:
+
+    ```text
+    .minecraft/config/vulkanmod_settings.json
+    ```
+
+    You can also change most settings through the in-game graphics menu, which VulkanMod replaces with its own revamped interface.
+  </Accordion>
+
+  <Accordion title="Why is my GPU not detected?">
+    VulkanMod includes a built-in GPU selector that lets you choose which physical device to use. If your GPU is not detected, check the GPU selection settings in the VulkanMod graphics menu. Ensure your GPU drivers support Vulkan 1.2 and are up to date.
+  </Accordion>
+
+  <Accordion title="Where can I get support?">
+    For troubleshooting and general questions, join the official Discord server:
+
+    [discord.gg/FVXg7AYR2Q](https://discord.gg/FVXg7AYR2Q)
+
+    The [GitHub wiki](https://github.com/xCollateral/VulkanMod/wiki) also contains useful guides. The GitHub issue tracker is for confirmed bugs only — not general support.
+  </Accordion>
+</AccordionGroup>

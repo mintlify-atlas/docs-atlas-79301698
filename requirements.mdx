@@ -1,0 +1,70 @@
+---
+title: "Requirements"
+description: "Hardware and software requirements for running VulkanMod."
+---
+
+VulkanMod replaces Minecraft's OpenGL renderer with a Vulkan 1.2 rendering engine. Your system must support Vulkan to run it.
+
+## Software requirements
+
+| Requirement | Version |
+|---|---|
+| Minecraft | 1.21.9 or 1.21.10 |
+| Fabric Loader | >= 0.14.14 |
+| Java | 21 |
+
+- **Minecraft 1.21.9 / 1.21.10** — the only supported versions, as defined in `fabric.mod.json`.
+- **Fabric Loader >= 0.14.14** — VulkanMod is a Fabric mod and does not support Forge or Quilt.
+- **Java 21** — required by the mod's build configuration (`sourceCompatibility = JavaVersion.VERSION_21`). The Minecraft Launcher bundles Java 21 automatically for these Minecraft versions.
+
+## GPU requirements
+
+VulkanMod requires a GPU with **Vulkan 1.2** support. Most dedicated and integrated GPUs released after 2016 qualify.
+
+| GPU vendor | Supported hardware | Minimum driver |
+|---|---|---|
+| NVIDIA | GTX 900 series (Maxwell) and newer | Game Ready 520+ or Studio 520+ |
+| AMD | RX 400 series (Polaris) and newer | Adrenalin 22.x or Mesa 22.x |
+| Intel | UHD 600 series and newer (Gen 9.5+) | DCH 30.x or Mesa 22.x |
+
+<Tip>
+Run `vulkaninfo` (Linux/macOS) or download [GPU Caps Viewer](https://www.ozone3d.net/gpu_caps_viewer/) (Windows) to confirm your GPU's Vulkan version before installing.
+</Tip>
+
+## Platform requirements
+
+<Tabs>
+  <Tab title="Windows">
+    - **Windows 10 or 11** — Vulkan support requires WDDM 2.0 or later, which ships with Windows 10.
+    - Vulkan drivers are included with standard NVIDIA, AMD, and Intel driver packages. Keep your GPU drivers up to date.
+    - VulkanMod uses the Win32 platform (`GLFW_PLATFORM_WIN32`) automatically on Windows.
+  </Tab>
+  <Tab title="Linux">
+    - **X11 or Wayland** desktop environment — both are supported. VulkanMod detects the active display server from the `XDG_SESSION_TYPE` environment variable and selects the appropriate GLFW platform automatically.
+    - **Vulkan drivers:**
+      - NVIDIA: proprietary driver 520+ (recommended) or Nouveau with Zink (limited)
+      - AMD: Mesa `radv` (recommended) or AMDVLK
+      - Intel: Mesa `anv` (ANV Vulkan driver)
+    - Install Mesa Vulkan drivers on Debian/Ubuntu-based systems:
+
+      ```bash
+      sudo apt install mesa-vulkan-drivers vulkan-tools
+      ```
+  </Tab>
+  <Tab title="macOS">
+    - **macOS with Apple Silicon or Intel** — both architectures are supported.
+    - macOS does not expose a native Vulkan API. VulkanMod bundles **MoltenVK**, a Vulkan-to-Metal translation layer, directly in the JAR — no separate installation is required.
+    - MoltenVK native libraries for both `natives-macos` (x86_64) and `natives-macos-arm64` (Apple Silicon) are included via LWJGL at build time.
+
+    <Warning>
+      MoltenVK translates Vulkan calls to Apple's Metal API at runtime. This translation layer introduces overhead that is not present on Windows or Linux. Performance and compatibility may differ, and some Vulkan 1.2 features may be unavailable depending on your macOS version and GPU.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## What is not supported
+
+- **Forge / NeoForge / Quilt** — VulkanMod targets the Fabric mod loader only.
+- **Minecraft versions outside 1.21.9 – 1.21.10** — other versions are not supported by the current release.
+- **OpenGL fallback** — VulkanMod fully replaces the OpenGL renderer. If your GPU does not support Vulkan 1.2, the game will not start with the mod installed.
+- **Dedicated server installs** — VulkanMod is a client-side mod (`"environment": "client"`). Installing it on a server has no effect and is unnecessary.

@@ -1,0 +1,212 @@
+---
+title: "Chunk culling"
+description: "VulkanMod's multi-algorithm chunk culling system for efficient world rendering."
+---
+
+Minecraft's world is divided into 16×16×16 block sections. At any render distance, thousands of sections exist, but only a small fraction are actually visible from the camera. Submitting draw calls for invisible sections wastes both CPU time (command recording) and GPU time (rasterisation of occluded geometry). VulkanMod uses multiple complementary culling algorithms to determine the minimal visible set before any draw call is issued.
+
+The entry point is `WorldRenderer.setupRenderer`, called once per rendered frame. It checks whether the camera has moved enough to warrant a graph update, then delegates to `SectionGraph.update`.
+
+## SectionGraph: breadth-first visibility traversal
+
+`SectionGraph` is the heart of the culling system. It performs a breadth-first traversal of the section grid starting from the section containing the camera, propagating visibility through open faces of each section.
+
+```java
+// SectionGraph.java:57–88
+public void update(Camera camera, Frustum frustum, boolean spectator) {
+    this.frustum = (((FrustumMixed) frustum).customFrustum())
+                       .offsetToFullyIncludeCameraCube(8);
+    this.sectionGrid.updateFrustumVisibility(this.frustum);
+
+    this.initUpdate();
+    this.initializeQueueForFullUpdate(camera);
+
+    if (flag)  // smartCull enabled
+        this.updateRenderChunks();
+    else
+        this.updateRenderChunksSpectator();
+
+    this.scheduleRebuilds();
+}
+```
+
+### Graph traversal
+
+The traversal in `updateRenderChunks` processes each `RenderSection` from a `ResettableQueue`:
+
+1. **Frustum check** — sections that fail `notInFrustum` are discarded immediately (see [frustum culling](#frustum-culling) below).
+2. **Direction-change limit** — sections whose `directionChanges` counter exceeds `advCulling - 1` are discarded (see [advCulling](#adv-culling-config)).
+3. **Non-empty sections** are added to their `ChunkArea`'s `sectionQueue` for rendering.
+4. **Block-entity sections** are separately tracked in `blockEntitiesSections`.
+5. **Dirty sections** are added to `rebuildQueue` for async mesh rebuild.
+6. **Adjacent sections** are enqueued via `visitAdjacentNodes`, filtered by the section's compiled visibility bitmask.
+
+```java
+// SectionGraph.java:164–195
+private void updateRenderChunks() {
+    int maxDirectionsChanges = Initializer.CONFIG.advCulling - 1;
+
+    while (this.sectionQueue.hasNext()) {
+        RenderSection renderSection = this.sectionQueue.poll();
+
+        if (notInFrustum(renderSection)) continue;
+        if (renderSection.directionChanges > maxDirectionsChanges) continue;
+
+        if (!renderSection.isCompletelyEmpty()) {
+            renderSection.getChunkArea().sectionQueue.add(renderSection);
+            this.chunkAreaQueue.add(renderSection.getChunkArea());
+            this.nonEmptyChunks++;
+        }
+        // ...
+        byte dirs = (byte) (renderSection.getVisibilityDirs() & renderSection.getDirections());
+        visitAdjacentNodes(renderSection, dirs);
+    }
+}
+```
+
+### Visibility bitmask propagation
+
+Each `RenderSection` stores a `long visibility` bitmask. During section mesh compilation, the builder records which pairs of faces (e.g. NORTH→SOUTH, UP→DOWN) have a line-of-sight through the section. During graph traversal, `getVisibilityDirs()` extracts the bitmask slice corresponding to the direction the traversal entered from, masking out directions that the source section's geometry blocks.
+
+```java
+// RenderSection.java:343–345
+public byte getVisibilityDirs() {
+    return (byte) (this.visibility >> (Util.getOppositeDirIdx(this.mainDir) << 3));
+}
+```
+
+The direction-change counter (`directionChanges`) increments each time the traversal turns a corner through a non-empty section, enabling the `advCulling` threshold to prune deep indirect paths.
+
+### Spectator mode
+
+When the camera is inside a solid block, `smartCull` is disabled and `updateRenderChunksSpectator` is used instead. This variant skips the direction-change limit, allowing the traversal to pass through sections regardless of geometry occlusion. Adjacent-section traversal is still filtered by `adjDirs` (which sections actually exist and are adjacent).
+
+## Frustum culling
+
+VulkanMod implements a two-level hierarchical frustum test: coarse testing at the `ChunkArea` level (8×8×8 sections per area), then fine testing at the individual `RenderSection` level.
+
+### VFrustum
+
+`VFrustum` wraps JOML's `FrustumIntersection` with camera-relative coordinate adjustment. It offsets the camera position to fully include the nearest 8-block-aligned cube, ensuring sections immediately under the camera are never incorrectly culled.
+
+```java
+// VFrustum.java:17–32
+public VFrustum offsetToFullyIncludeCameraCube(int offset) {
+    // Iteratively steps the camera backward along the view vector
+    // until the nearest aligned cube falls fully inside the frustum.
+    while (this.intersectAab(...) >= 0) {
+        this.camZ -= (this.viewVector.z() * 4.0F);
+        this.camX -= (this.viewVector.x() * 4.0F);
+        this.camY -= (this.viewVector.y() * 4.0F);
+    }
+    return this;
+}
+```
+
+`testFrustum` returns a boolean via `FrustumIntersection.testAab` for exact per-section AABB tests. `cubeInFrustum` returns one of three constants from `FrustumIntersection`: `INSIDE`, `INTERSECT`, or `OUTSIDE`.
+
+### ChunkArea frustum cache
+
+`ChunkArea.updateFrustum` pre-computes frustum intersection results for all 64 sub-cubes within an 8×8×8 section area and stores them in a `byte[64] frustumBuffer`. The buffer is indexed by the section's `frustumIndex`, a compact 6-bit key computed from the section's position within its area.
+
+```java
+// ChunkArea.java:29–91
+public void updateFrustum(VFrustum frustum) {
+    int frustumResult = frustum.cubeInFrustum(
+        this.position.x(), this.position.y(), this.position.z(),
+        this.position.x() + (8 << 4), ...);
+
+    if (frustumResult == FrustumIntersection.INTERSECT) {
+        // Subdivide into 2×2×2 sub-areas, then again for each 4-section cell
+        // ...
+    } else {
+        Arrays.fill(frustumBuffer, (byte) frustumResult);
+    }
+}
+```
+
+During graph traversal, `notInFrustum` first checks the cached area result. Only sections whose area result is `INTERSECT` (not definitively inside or outside) incur a precise per-section `VFrustum.testFrustum` call.
+
+```java
+// SectionGraph.java:208–217
+private boolean notInFrustum(RenderSection renderSection) {
+    byte frustumRes = renderSection.getChunkArea().inFrustum(renderSection.frustumIndex);
+    if (frustumRes > FrustumIntersection.INTERSECT) {
+        return true;  // OUTSIDE
+    } else if (frustumRes == FrustumIntersection.INTERSECT) {
+        return !frustum.testFrustum(
+            renderSection.xOffset, renderSection.yOffset, renderSection.zOffset,
+            renderSection.xOffset + 16, renderSection.yOffset + 16, renderSection.zOffset + 16);
+    }
+    return false;  // INSIDE — always visible
+}
+```
+
+## advCulling config
+
+The `advCulling` config option controls how aggressively the graph traversal prunes indirect visibility paths. Internally it sets the maximum number of direction changes the traversal may make through non-empty sections before a branch is cut.
+
+| advCulling value | `maxDirectionsChanges` | Effect |
+|---|---|---|
+| 1 | 0 | Strictest: only straight-line paths are followed |
+| 2 | 1 | One turn allowed; good balance for most scenes |
+| 3+ | 2+ | More indirect paths explored; higher section count |
+
+A value of 0 (or disabled `smartCull` / spectator mode) removes the limit entirely: all reachable sections are included regardless of path complexity.
+
+## ChunkArea and ChunkAreaManager
+
+Sections are grouped into `ChunkArea` objects, each covering an 8×8×8 section volume. This grouping serves two purposes:
+
+- **Batched frustum testing** — a single area-level test eliminates up to 512 individual section tests.
+- **Shared draw buffers** — all sections in an area share a `DrawBuffers` instance, which holds the GPU vertex and index buffers for that group.
+
+`ChunkAreaManager` maintains a toroidal grid of `ChunkArea` objects that repositions as the camera moves. When the camera crosses an area boundary, `repositionAreas` updates the origin coordinates of the areas that have scrolled out of view, releasing their GPU buffers.
+
+```java
+// ChunkAreaManager.java:12–16
+public static final int WIDTH  = 8;  // sections per area, XZ
+public static final int HEIGHT = 8;  // sections per area, Y
+public static final int AREA_SIZE = WIDTH * WIDTH * HEIGHT;  // 512 sections
+```
+
+## RenderSection lifecycle
+
+A `RenderSection` represents a single 16×16×16 section and tracks:
+
+- **World position** (`xOffset`, `yOffset`, `zOffset`) — block-space origin of the section.
+- **Compile status** — whether the mesh has been built (`compiled`) or is still pending (`UNCOMPILED`).
+- **Dirty flag** — set when a block change in the section or a neighbouring section invalidates the mesh.
+- **Visibility bitmask** — 64-bit value encoding face-pair visibility, computed during mesh build.
+- **Graph state** — `mainDir`, `directions`, `sourceDirs`, `directionChanges`, `steps` — ephemeral data written and consumed during each graph traversal.
+- **Adjacent pointers** — direct object references to `adjDown`, `adjUp`, `adjNorth`, `adjSouth`, `adjWest`, `adjEast`, allowing O(1) neighbour traversal without hash-map lookups.
+
+When a section is marked dirty, `WorldRenderer.setSectionDirty` schedules a `BuildTask` on the `TaskDispatcher`. The build task runs on a background thread pool (size controlled by `builderThreads` config), computes the mesh and visibility data, and uploads the result on the next `uploadSections` call.
+
+## QuadFacing and per-face draw parameters
+
+During mesh compilation, each quad is classified into one of seven `QuadFacing` values based on its normal vector:
+
+```java
+// QuadFacing.java
+public enum QuadFacing {
+    X_POS, Y_POS, Z_POS, X_NEG, Z_NEG, UNDEFINED, Y_NEG;
+}
+```
+
+Per-section, per-render-type, and per-facing draw parameters are stored in a `DrawParametersBuffer`. In indirect draw mode, only the facings visible from the camera direction are included in the indirect draw commands, reducing geometry submitted to the GPU.
+
+## Indirect draw interaction
+
+When `indirectDraw` is enabled, `DrawBuffers.buildDrawBatchesIndirect` constructs `VkDrawIndexedIndirectCommand` entries — one per visible (section, facing) pair — into the frame's `IndirectBuffer`. A single `vkCmdDrawIndexedIndirect` call then issues all draw commands for an area in one Vulkan command, substantially reducing CPU overhead compared to one `vkCmdDrawIndexed` call per section.
+
+```java
+// WorldRenderer.java:375–378
+if (indirectDraw)
+    drawBuffers.buildDrawBatchesIndirect(
+        cameraPos, indirectBuffers[currentFrame], queue, renderType);
+else
+    drawBuffers.buildDrawBatchesDirect(cameraPos, queue, renderType);
+```
+
+The `IndirectBuffer` is per-frame (one per `framesNum` slot) so that the CPU can build the next frame's commands while the GPU processes the current frame.

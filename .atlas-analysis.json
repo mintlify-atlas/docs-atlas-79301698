@@ -1,0 +1,97 @@
+{
+  "projectType": "general",
+  "projectName": "VulkanMod",
+  "projectDescription": "A Fabric mod that replaces Minecraft Java Edition's OpenGL renderer with a full Vulkan-based rendering engine for improved performance and modern GPU capabilities.",
+  "theme": "aspen",
+  "primaryColor": "#AC1F2D",
+  "lightColor": "#C94040",
+  "darkColor": "#7A1020",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "requirements"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/settings",
+              "configuration/graphics-options",
+              "configuration/gpu-selection"
+            ]
+          },
+          {
+            "group": "Rendering Engine",
+            "pages": [
+              "rendering/overview",
+              "rendering/chunk-culling",
+              "rendering/pipelines-and-shaders",
+              "rendering/memory-management"
+            ]
+          },
+          {
+            "group": "Platform Support",
+            "pages": [
+              "platforms/windows",
+              "platforms/linux",
+              "platforms/macos"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "troubleshooting/faq",
+              "troubleshooting/incompatible-mods",
+              "troubleshooting/reporting-bugs"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "contributing/building",
+              "contributing/architecture",
+              "contributing/contributing-guide"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Full Vulkan 1.2 renderer replacing Minecraft's OpenGL 3.2 renderer",
+    "Multiple chunk culling algorithms (frustum, graph-based section culling)",
+    "Indirect draw mode to reduce CPU overhead",
+    "GPU selector to pick the preferred rendering device",
+    "Native Wayland support on Linux",
+    "Windowed fullscreen mode",
+    "VMA (Vulkan Memory Allocator) based memory management",
+    "GLSL shaders compiled to SPIR-V via shaderc",
+    "Resizable render frame queue",
+    "Revamped graphics settings menu",
+    "Cross-platform: Windows, Linux (X11/Wayland), macOS (MoltenVK)"
+  ],
+  "publicApiSurface": [
+    "net.vulkanmod.Initializer - Fabric mod entry point, exposes CONFIG and VERSION",
+    "net.vulkanmod.vulkan.Vulkan - Core Vulkan context: initVulkan(), cleanUp(), waitIdle()",
+    "net.vulkanmod.vulkan.Renderer - Main render loop: initRenderer(), getInstance(), getDrawer()",
+    "net.vulkanmod.config.Config - Mod configuration: advCulling, indirectDraw, frameQueueSize, device, entityCulling",
+    "net.vulkanmod.config.Platform - Platform detection: isWayLand(), isX11(), isWindows(), isMacOS()",
+    "net.vulkanmod.vulkan.device.DeviceManager - GPU device management: availableDevices, suitableDevices, init()",
+    "net.vulkanmod.render.PipelineManager - Render pipeline management",
+    "net.vulkanmod.render.chunk.WorldRenderer - Chunk rendering orchestration",
+    "net.vulkanmod.vulkan.shader.GraphicsPipeline - Vulkan graphics pipeline abstraction",
+    "net.vulkanmod.vulkan.framebuffer.SwapChain - Swap chain and VSync control"
+  ]
+}

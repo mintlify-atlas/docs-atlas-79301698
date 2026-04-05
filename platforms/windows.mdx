@@ -1,0 +1,47 @@
+---
+title: "Windows"
+description: "Running VulkanMod on Windows — drivers and setup."
+---
+
+VulkanMod detects Windows via Apache Commons `SystemUtils.IS_OS_WINDOWS` and initializes GLFW with `GLFW_PLATFORM_WIN32`.
+
+## Requirements
+
+- A GPU with a Vulkan 1.2-capable driver
+- Up-to-date GPU drivers:
+  - **NVIDIA:** Game Ready or Studio drivers from [nvidia.com](https://www.nvidia.com/drivers)
+  - **AMD:** Adrenalin drivers from [amd.com](https://www.amd.com/support)
+  - **Intel:** Arc or Iris Xe drivers from [intel.com](https://www.intel.com/content/www/us/en/download-center)
+
+<Note>
+  Windows does not require any additional display-server configuration.
+  `GLFW_PLATFORM_WIN32` is selected unconditionally on all Windows systems.
+</Note>
+
+## GPU selection on Optimus laptops
+
+NVIDIA Optimus and AMD hybrid-graphics laptops have two GPUs: an integrated GPU (iGPU) and a discrete GPU (dGPU). By default, the iGPU may be used, reducing performance.
+
+<Steps>
+  <Step title="Open the NVIDIA Control Panel">
+    Right-click the desktop and select **NVIDIA Control Panel**, then go to
+    **Manage 3D Settings → Program Settings**.
+  </Step>
+  <Step title="Add Minecraft">
+    Add `javaw.exe` or your launcher executable and set the preferred GPU to
+    **High-performance NVIDIA processor**.
+  </Step>
+  <Step title="Verify">
+    Launch Minecraft and check the VulkanMod debug screen to confirm the
+    discrete GPU is active.
+  </Step>
+</Steps>
+
+<Tip>
+  AMD hybrid-graphics users can set the preferred GPU in **AMD Radeon Software
+  → Gaming → Graphics** for the Minecraft launcher executable.
+</Tip>
+
+## VSync
+
+VSync is controlled through VulkanMod's own video settings. The Windows platform backend does not impose additional VSync constraints beyond what the Vulkan swapchain exposes.

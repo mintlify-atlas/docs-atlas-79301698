@@ -1,0 +1,132 @@
+---
+title: "GPU selection"
+description: "Select which GPU VulkanMod uses for rendering — useful on multi-GPU systems."
+---
+
+VulkanMod lets you choose which physical GPU handles rendering. This matters most on systems that expose more than one GPU to Vulkan: gaming laptops with both an integrated and a discrete GPU, desktops with a dedicated card alongside CPU-integrated graphics, or multi-GPU workstations.
+
+## How VulkanMod enumerates GPUs
+
+At startup, `DeviceManager` performs a two-stage device discovery:
+
+<Steps>
+  <Step title="Enumerate all physical devices">
+    VulkanMod calls `vkEnumeratePhysicalDevices` and records every GPU the Vulkan instance can see. The result is stored in `DeviceManager.availableDevices`.
+  </Step>
+  <Step title="Filter to suitable devices">
+    Each available device is tested against a suitability check. Only devices that pass are added to `DeviceManager.suitableDevices`. The device selector in the settings UI and the `device` config field index into this list.
+  </Step>
+</Steps>
+
+### What "suitable" means
+
+A device is considered suitable when it meets all three of the following conditions (`DeviceManager.isDeviceSuitable`):
+
+1. **Queue families** — the device exposes graphics, present, transfer, and compute queue families (`Queue.findQueueFamilies` returns a complete set).
+2. **Required extensions** — the device supports all extensions listed in `Vulkan.REQUIRED_EXTENSION` (includes swap chain support).
+3. **Swap chain** — at least one surface format and one present mode are available for the game window's Vulkan surface.
+
+<Note>
+  A GPU that appears in `availableDevices` but not `suitableDevices` cannot be selected. This typically means the driver does not support Vulkan 1.2 or lacks a required extension.
+</Note>
+
+---
+
+## Automatic device selection
+
+When `device` is `-1` (the default), VulkanMod runs `autoPickDevice()` to choose among the suitable devices using the following priority order:
+
+1. **Discrete GPU** — the first device with `VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU` is selected immediately.
+2. **Integrated GPU** — if no discrete GPU is found, the first integrated GPU is used.
+3. **Other device** — if neither type is present, the first remaining suitable device is used.
+4. **Error** — if `suitableDevices` is empty, initialization throws `IllegalStateException: Failed to find a suitable GPU`.
+
+<Tip>
+  On a laptop with both an Intel integrated GPU and an Nvidia discrete GPU, auto-select will always choose the Nvidia card. You do not need to configure anything in this case.
+</Tip>
+
+---
+
+## Setting the device manually
+
+The `device` field in `vulkanmod_settings.json` holds the zero-based index of the target device within `suitableDevices`.
+
+<Tabs>
+  <Tab title="Auto (recommended)">
+    ```json vulkanmod_settings.json
+    {
+      "device": -1
+    }
+    ```
+
+    VulkanMod picks the best available device automatically. If the configured index becomes invalid (e.g. after a driver reinstall changes device order), VulkanMod resets to `-1` automatically:
+
+    ```java
+    if (deviceIdx >= 0 && deviceIdx < suitableDevices.size())
+        DeviceManager.device = suitableDevices.get(deviceIdx);
+    else {
+        DeviceManager.device = autoPickDevice();
+        Initializer.CONFIG.device = -1;  // reset
+    }
+    ```
+  </Tab>
+  <Tab title="Pinned to device 0">
+    ```json vulkanmod_settings.json
+    {
+      "device": 0
+    }
+    ```
+
+    Forces VulkanMod to use the first suitable device (index `0`). On most single-GPU systems this is the only device, so this is equivalent to auto.
+  </Tab>
+  <Tab title="Pinned to device 1">
+    ```json vulkanmod_settings.json
+    {
+      "device": 1
+    }
+    ```
+
+    Forces VulkanMod to use the second suitable device (index `1`). Use this to select a discrete GPU when auto-select picks the wrong one, or to deliberately target an integrated GPU for power saving.
+  </Tab>
+</Tabs>
+
+You can also change the device in-game without editing the file manually:
+
+<Steps>
+  <Step title="Open Video Settings">
+    Options → Video Settings (VulkanMod's settings screen opens).
+  </Step>
+  <Step title="Go to the Other tab">
+    Switch to the **Other** tab.
+  </Step>
+  <Step title="Cycle the Device Selector option">
+    The **Device Selector** option cycles through **Auto** and each suitable device by name. The current active device is shown in the option's tooltip.
+  </Step>
+  <Step title="Apply and restart">
+    Save settings and restart Minecraft. VulkanMod initializes the Vulkan logical device at startup, so a restart is required for the new selection to take effect.
+  </Step>
+</Steps>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="My GPU does not appear in the device selector">
+    The GPU is in `availableDevices` but failed the suitability check. Check the game log for the device list output — VulkanMod logs unsupported extensions per device when initialization fails:
+
+    ```
+    Device: Intel(R) UHD Graphics 630
+        Vulkan Version: 1.2.182
+        Unsupported extension: [VK_KHR_swapchain]
+    ```
+
+    Update your GPU driver to get the latest Vulkan support.
+  </Accordion>
+  <Accordion title="VulkanMod ignores my device setting after an update">
+    If the configured index is out of range (e.g. you previously had two suitable devices and now have one), VulkanMod resets `device` to `-1` and rewrites the config. This is expected behavior.
+  </Accordion>
+  <Accordion title="I want to use the integrated GPU to save power">
+    Set `device` to the index of the integrated GPU in `suitableDevices`. You can identify it by name in the in-game device selector tooltip. Be aware that performance will be significantly lower than on a discrete GPU.
+  </Accordion>
+</AccordionGroup>

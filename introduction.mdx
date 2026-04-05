@@ -1,0 +1,85 @@
+---
+title: "VulkanMod"
+description: "A Fabric mod that replaces Minecraft Java Edition's OpenGL renderer with a full Vulkan-based rendering engine for improved performance and modern GPU capabilities."
+---
+
+VulkanMod is a Fabric mod for Minecraft Java Edition that completely replaces the default OpenGL 3.2 renderer with a custom Vulkan 1.2 rendering engine. It is not a simple translation layer — it is a full rewrite of Minecraft's internal renderer built from the ground up using the Vulkan API.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install VulkanMod in three easy steps using Fabric Loader
+  </Card>
+  <Card title="Requirements" icon="circle-check" href="/requirements">
+    Check hardware and software requirements before installing
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/settings">
+    Tune rendering settings, culling, and frame queue size
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/troubleshooting/faq">
+    Common issues, incompatible mods, and how to report bugs
+  </Card>
+</CardGroup>
+
+## Why VulkanMod?
+
+Minecraft's renderer dates back to OpenGL 3.2 — an API from 2009. VulkanMod modernizes this by adopting Vulkan 1.2, a low-overhead, explicit graphics API that unlocks:
+
+- **Reduced CPU overhead** — Vulkan's explicit command model moves work off the CPU and reduces driver-side synchronization
+- **Indirect draw** — GPU-driven rendering lets the graphics card determine what to draw, bypassing CPU bottlenecks
+- **Modern GPU features** — access to capabilities not available or poorly supported in OpenGL
+- **Native platform support** — first-class Wayland support on Linux, MoltenVK on macOS
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Chunk culling" icon="eye-slash" href="/rendering/chunk-culling">
+    Multiple frustum and graph-based culling algorithms reduce the number of chunks rendered each frame
+  </Card>
+  <Card title="Vulkan pipelines" icon="microchip" href="/rendering/pipelines-and-shaders">
+    GLSL shaders compiled to SPIR-V at startup, managed through a full Vulkan pipeline system
+  </Card>
+  <Card title="GPU selector" icon="server" href="/configuration/gpu-selection">
+    Choose which GPU VulkanMod uses — useful for multi-GPU systems
+  </Card>
+  <Card title="Platform support" icon="desktop" href="/platforms/windows">
+    Runs on Windows, Linux (X11 and Wayland), and macOS via MoltenVK
+  </Card>
+</CardGroup>
+
+## Quick start
+
+<Steps>
+  <Step title="Install Fabric Loader">
+    Download and run the [Fabric installer](https://fabricmc.net/use/installer/) for your Minecraft version. VulkanMod targets **Minecraft 1.21.9 / 1.21.10**.
+  </Step>
+  <Step title="Download VulkanMod">
+    Grab the latest `VulkanMod_*.jar` from [Modrinth](https://modrinth.com/mod/vulkanmod/versions), [CurseForge](https://www.curseforge.com/minecraft/mc-mods/vulkanmod), or [GitHub Releases](https://github.com/xCollateral/VulkanMod/releases).
+  </Step>
+  <Step title="Drop the JAR into mods/">
+    Place `VulkanMod_*.jar` into your `.minecraft/mods` folder.
+  </Step>
+  <Step title="Launch Minecraft">
+    Start the Fabric profile in the Minecraft Launcher. VulkanMod loads automatically — no additional configuration required.
+  </Step>
+</Steps>
+
+<Note>
+VulkanMod is a **client-side** mod only. It does not need to be installed on servers.
+</Note>
+
+## Current status
+
+VulkanMod is actively developed and functional for everyday play. Some features remain in progress:
+
+| Feature | Status |
+|---|---|
+| Vulkan renderer | Stable |
+| Indirect draw | Stable |
+| Chunk culling | Stable |
+| Native Wayland | Stable |
+| GPU selector | Stable |
+| Shader support | Planned |
+
+<Warning>
+This mod is still under active development. Expect occasional crashes or rendering issues. Report bugs with logs attached on the [GitHub issue tracker](https://github.com/xCollateral/VulkanMod/issues).
+</Warning>

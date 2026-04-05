@@ -1,0 +1,309 @@
+---
+title: "Pipelines and shaders"
+description: "VulkanMod's Vulkan graphics pipeline system and SPIR-V shader compilation."
+---
+
+In OpenGL, rendering state (blend mode, depth test, polygon mode, shader) is a single mutable context that can be changed at any time. Vulkan replaces this with **graphics pipeline objects**: immutable, pre-compiled bundles of all state needed to rasterise geometry. Switching state means binding a different pipeline object rather than calling a sequence of state-change functions.
+
+VulkanMod manages these pipeline objects through a class hierarchy rooted at `Pipeline`, with `GraphicsPipeline` as the concrete implementation used for all on-screen rendering.
+
+## Pipeline class hierarchy
+
+```
+Pipeline  (abstract)
+├─ descriptor set layout
+├─ pipeline layout
+├─ UBOs / ManualUBO / ImageDescriptors
+├─ PushConstants
+└─ DescriptorSets[]  (one per frame-in-flight)
+     └─ GraphicsPipeline  (concrete)
+          ├─ vertex + fragment shader modules
+          ├─ VertexInputDescription
+          └─ Object2LongMap<PipelineState, VkPipeline>
+```
+
+The `Object2LongMap<PipelineState, long>` inside `GraphicsPipeline` is the key design decision: rather than a single compiled pipeline, each `GraphicsPipeline` lazily compiles a separate `VkPipeline` handle for every unique `PipelineState` it is used with. This means the terrain shader automatically produces distinct `VkPipeline` objects for solid, translucent, and wireframe rendering modes without requiring the caller to manage separate objects.
+
+```java
+// GraphicsPipeline.java:55–57
+public long getHandle(PipelineState state) {
+    return graphicsPipelines.computeIfAbsent(state, this::createGraphicsPipeline);
+}
+```
+
+## GraphicsPipeline construction
+
+`createGraphicsPipeline(PipelineState state)` fills out the full Vulkan pipeline create info in one call:
+
+<AccordionGroup>
+  <Accordion title="Shader stages">
+    Two `VkPipelineShaderStageCreateInfo` entries: one for the vertex shader module (`VK_SHADER_STAGE_VERTEX_BIT`) and one for the fragment shader module (`VK_SHADER_STAGE_FRAGMENT_BIT`). Both reference SPIR-V modules created by `createShaderModule`.
+  </Accordion>
+
+  <Accordion title="Vertex input">
+    `VertexInputDescription` derives `VkVertexInputBindingDescription` (stride from the `VertexFormat`) and `VkVertexInputAttributeDescription` entries for each format element (position, color, UV, normal). Vulkan formats are mapped per element type and usage — for example, `POSITION/FLOAT` maps to `VK_FORMAT_R32G32B32_SFLOAT` and `COLOR/UBYTE` to `VK_FORMAT_R8G8B8A8_UNORM`.
+  </Accordion>
+
+  <Accordion title="Input assembly">
+    Topology is decoded from `PipelineState.AssemblyRasterState` — either `VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST` or `VK_PRIMITIVE_TOPOLOGY_LINE_LIST`.
+  </Accordion>
+
+  <Accordion title="Rasterization">
+    Polygon mode (`FILL`, `LINE`, `POINT`), cull mode, and front face (`VK_FRONT_FACE_COUNTER_CLOCKWISE`) are decoded from the state. `depthBiasEnable` is always `true`; the actual bias values are set dynamically via `vkCmdSetDepthBias`.
+  </Accordion>
+
+  <Accordion title="Depth / stencil">
+    `depthTestEnable`, `depthWriteEnable`, and `depthCompareOp` are decoded from `PipelineState.DepthState`. Stencil testing is disabled.
+  </Accordion>
+
+  <Accordion title="Color blending">
+    Blend state (enable flag, src/dst factors for RGB and alpha, blend op) and color write mask are decoded from `PipelineState.BlendState` and `PipelineState.ColorMask`. Logic operations are decoded from `PipelineState.LogicOpState`.
+  </Accordion>
+
+  <Accordion title="Dynamic states">
+    `VK_DYNAMIC_STATE_DEPTH_BIAS`, `VK_DYNAMIC_STATE_VIEWPORT`, and `VK_DYNAMIC_STATE_SCISSOR` are always dynamic. `VK_DYNAMIC_STATE_LINE_WIDTH` is added when the topology is `LINE_LIST` or polygon mode is `LINE`.
+  </Accordion>
+</AccordionGroup>
+
+The resulting `VkPipeline` handle is stored in the map and reused on subsequent frames with the same `PipelineState`.
+
+## PipelineState
+
+`PipelineState` is a compact, value-typed key that encodes all variable rasterisation state into a small set of integers. `Renderer.bindGraphicsPipeline` calls `PipelineState.getCurrentPipelineState(boundRenderPass)` each time a pipeline bind is requested. If the resulting state key matches the currently bound handle, the bind is skipped — a zero-cost check that avoids redundant `vkCmdBindPipeline` calls.
+
+```java
+// Renderer.java:603–617
+public void bindGraphicsPipeline(GraphicsPipeline pipeline) {
+    PipelineState currentState = PipelineState.getCurrentPipelineState(boundRenderPass);
+    final long handle = pipeline.getHandle(currentState);
+
+    if (boundPipelineHandle == handle) {
+        return;  // already bound — no-op
+    }
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+    boundPipelineHandle = handle;
+}
+```
+
+## Pipeline cache
+
+All pipelines share a single `VkPipelineCache` object (`PIPELINE_CACHE`), created at class-load time via `Pipeline.createPipelineCache`. The cache allows the Vulkan driver to reuse compiled shader bytecode across pipeline variants and across application runs (if the driver persists the cache to disk).
+
+```java
+// Pipeline.java:46–60
+private static long createPipelineCache() {
+    VkPipelineCacheCreateInfo cacheCreateInfo = VkPipelineCacheCreateInfo.calloc(stack);
+    cacheCreateInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
+    vkCreatePipelineCache(DEVICE, cacheCreateInfo, null, pPipelineCache);
+    return pPipelineCache.get(0);
+}
+```
+
+## SPIR-V compilation
+
+All shaders are compiled at runtime from GLSL source to SPIR-V binary by `SPIRVUtils`, which wraps the [shaderc](https://github.com/google/shaderc) library via LWJGL bindings.
+
+### Compiler initialisation
+
+A single `shaderc_compiler_t` and `shaderc_compile_options_t` are created at class-load time:
+
+```java
+// SPIRVUtils.java:42–66
+private static void initCompiler() {
+    compiler = shaderc_compiler_initialize();
+    options  = shaderc_compile_options_initialize();
+
+    if (DEBUG)
+        shaderc_compile_options_set_generate_debug_info(options);
+
+    shaderc_compile_options_set_target_env(
+        options, shaderc_env_version_vulkan_1_2, VK12.VK_API_VERSION_1_2);
+
+    shaderc_compile_options_set_include_callbacks(
+        options, SHADER_INCLUDER, SHADER_RELEASER, pUserData);
+
+    addIncludePath("/assets/vulkanmod/shaders/include/");
+}
+```
+
+Debug info generation is always on (`DEBUG = true`); shader optimisations are off (`OPTIMIZATIONS = false`).
+
+### Include resolution
+
+A `ShaderIncluder` callback resolves `#include` directives by searching the registered include paths. The default path is `/assets/vulkanmod/shaders/include/`, which contains the shared utility headers (`fog.glsl`, `light.glsl`, `matrix.glsl`, `projection.glsl`).
+
+### Compilation
+
+`SPIRVUtils.compileShader` compiles a GLSL string to SPIR-V bytecode:
+
+```java
+// SPIRVUtils.java:75–92
+public static SPIRV compileShader(String filename, String source, ShaderKind shaderKind) {
+    long result = shaderc_compile_into_spv(
+        compiler, source, shaderKind.kind, filename, "main", options);
+
+    if (shaderc_result_get_compilation_status(result) != shaderc_compilation_status_success) {
+        throw new RuntimeException("Failed to compile shader %s: %s"
+            .formatted(filename, shaderc_result_get_error_message(result)));
+    }
+
+    return new SPIRV(result, shaderc_result_get_bytes(result));
+}
+```
+
+Supported shader kinds are `VERTEX_SHADER`, `FRAGMENT_SHADER`, `GEOMETRY_SHADER`, and `COMPUTE_SHADER`.
+
+## GLSL-to-Vulkan converter
+
+Minecraft's built-in shaders are written in a GLSL dialect that assumes OpenGL semantics (e.g. `uniform` blocks without explicit binding numbers, `in`/`out` without `layout(location=...)`). The `converter` package provides a lightweight parser that transforms these shaders into Vulkan-compatible GLSL before they are handed to shaderc.
+
+`GLSLParser` is described in its own Javadoc as:
+
+> "Simple parser used to convert GLSL shader code to make it Vulkan compatible"
+
+The parser tokenises the source with `Lexer`, then processes token by token:
+
+| Input construct | Transformation |
+|---|---|
+| `#version` directive | Replaced with `#version 450` |
+| `layout(...) uniform` block | Assigned an explicit `binding` index and emitted as a Vulkan UBO |
+| `uniform sampler2D name;` | Assigned a binding index, converted to a `layout(binding=N) uniform sampler2D name;` declaration |
+| `in type id;` / `out type id;` | Assigned `layout(location=N)` indices; vertex `in` locations are matched against the `VertexFormat`'s element names |
+| `#line` directives | Stripped (not needed for Vulkan) |
+| `gl_VertexID` | Macro-replaced with `gl_VertexIndex` |
+| Reserved keywords | `sampler` → `sampler1`, `sample` → `sample1` |
+
+The parser outputs separate strings for vertex and fragment stages, then the caller calls `createUBOs()` and `getSamplerList()` to extract the descriptor binding metadata produced during parsing.
+
+## Shader directory structure
+
+```
+assets/vulkanmod/shaders/
+├─ basic/
+│   ├─ terrain/          # Opaque and cutout terrain
+│   │   ├─ terrain.vsh
+│   │   ├─ terrain.fsh
+│   │   └─ terrain.json  # Binding declarations
+│   ├─ terrain_earlyZ/   # Translucent terrain (early-Z pass)
+│   │   ├─ terrain_earlyZ.vsh (not present; shares terrain.vsh name)
+│   │   ├─ terrain_earlyZ.fsh
+│   │   └─ terrain_earlyZ.json
+│   ├─ blit/             # Fast fullscreen blit
+│   └─ clouds/           # Cloud geometry
+├─ core/
+│   ├─ rendertype_item_entity_translucent_cull/
+│   └─ screenquad/
+├─ include/
+│   ├─ fog.glsl           # Fog distance helpers
+│   ├─ light.glsl         # Lightmap sampling
+│   ├─ matrix.glsl
+│   └─ projection.glsl
+└─ post/
+    └─ blit/              # Post-processing blit
+```
+
+### terrain.json — binding declaration format
+
+Each shader directory contains a JSON file that declares UBOs, samplers, and push constants consumed by the pipeline builder. The terrain shader JSON is:
+
+```json
+{
+    "vertex": "terrain",
+    "fragment": "terrain",
+    "samplers": [
+        { "name": "Sampler0" },
+        { "name": "Sampler2" }
+    ],
+    "UBOs": [
+        { "type": "vertex", "binding": 0, "fields": [
+            { "name": "MVP", "type": "matrix4x4", "count": 16, ... }
+        ]},
+        { "type": "fragment", "binding": 1, "fields": [
+            { "name": "FogColor",                 "type": "float", "count": 4 },
+            { "name": "FogEnvironmentalStart",     "type": "float", "count": 1 },
+            { "name": "FogRenderDistanceEnd",      "type": "float", "count": 1 },
+            ...
+        ]}
+    ],
+    "PushConstants": [
+        { "name": "ModelOffset", "type": "float", "count": 3 }
+    ]
+}
+```
+
+`Pipeline.Builder.parseBindings` reads this JSON to construct the `UBO`, `ImageDescriptor`, and `PushConstants` objects that drive descriptor-set layout creation.
+
+### terrain.vsh — compressed vertex format
+
+The terrain vertex shader accepts a compressed vertex layout enabled by the `COMPRESSED_VERTEX` define, using `ivec4` positions packed into 12-bit fixed-point values and `uvec2` UV coordinates:
+
+```glsl
+// terrain.vsh
+#ifdef COMPRESSED_VERTEX
+    layout (location = 0) in ivec4 Position;
+    layout (location = 1) in uvec2 UV0;
+    layout (location = 2) in uint PackedColor;
+#endif
+
+const vec3 POSITION_INV = vec3(1.0 / 2048.0);
+
+vec3 getVertexPosition() {
+    const vec3 baseOffset = bitfieldExtract(
+        ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8);
+    return fma(Position.xyz, POSITION_INV, ModelOffset + baseOffset);
+}
+```
+
+The `ModelOffset` push constant carries a per-section world-space origin, encoded in the lower 24 bits of `gl_InstanceIndex` via the indirect draw instance index.
+
+## Uniforms system
+
+`Uniforms.setupDefaultUniforms` populates static maps from uniform name to `Supplier<MappedBuffer>` (for matrix/vector types) or `Supplier<Float>` / `Supplier<Integer>`. These maps are consulted at pipeline build time when `Uniform.Info.setupSupplier()` resolves a named uniform to its live data source.
+
+```java
+// Uniforms.java:25–56
+mat4f_uniformMap.put("ModelViewMat", VRenderSystem::getModelViewMatrix);
+mat4f_uniformMap.put("ProjMat",      VRenderSystem::getProjectionMatrix);
+mat4f_uniformMap.put("MVP",          VRenderSystem::getMVP);
+mat4f_uniformMap.put("TextureMat",   VRenderSystem::getTextureMatrix);
+
+vec1f_uniformMap.put("FogStart",     () -> VRenderSystem.getFogData().renderDistanceStart);
+vec1f_uniformMap.put("AlphaCutout",  () -> VRenderSystem.alphaCutout);
+
+vec4f_uniformMap.put("ColorModulator", VRenderSystem::getShaderColor);
+vec4f_uniformMap.put("FogColor",       VRenderSystem::getShaderFogColor);
+```
+
+When `Renderer.uploadAndBindUBOs` is called each frame, each `UBO` copies its current uniform values into the frame's `UniformBuffer` at an aligned offset and calls `vkCmdBindDescriptorSets` to point the shader at that data.
+
+Push constants are a separate, lower-latency path for small, frequently changing data such as `ModelOffset`. They are uploaded via `nvkCmdPushConstants` into the vertex-stage push constant range directly in the command buffer, avoiding descriptor overhead.
+
+## PipelineManager
+
+`PipelineManager` is the static factory that creates and owns the built-in pipelines at startup. It calls `PipelineManager.init()` from `Renderer.init()`:
+
+```java
+// PipelineManager.java:29–45
+public static void init() {
+    setTerrainVertexFormat(CustomVertexFormat.COMPRESSED_TERRAIN);
+    createBasicPipelines();
+    setDefaultShader();
+    ThreadBuilderPack.defaultTerrainBuilderConstructor();
+}
+
+private static void createBasicPipelines() {
+    terrainShaderEarlyZ = createPipeline("terrain_earlyZ", terrainVertexFormat);
+    terrainShader        = createPipeline("terrain",        terrainVertexFormat);
+    fastBlitPipeline     = createPipeline("blit",           CustomVertexFormat.NONE);
+    cloudsPipeline       = createPipeline("clouds",         DefaultVertexFormat.POSITION_COLOR);
+}
+```
+
+`createPipeline` resolves the shader path, parses the JSON binding declarations, loads and compiles the GLSL sources, and calls `Pipeline.Builder.createGraphicsPipeline()`.
+
+The `shaderGetter` function pointer (a `Function<TerrainRenderType, GraphicsPipeline>`) allows other code (such as shader-pack integrations) to replace the terrain pipeline at runtime by calling `PipelineManager.setShaderGetter`. The default getter returns `terrainShaderEarlyZ` for translucent render types and `terrainShader` for all others.
+
+<Note>
+  `PipelineManager.destroyPipelines()` must be called during shutdown before the Vulkan device is destroyed. It calls `GraphicsPipeline.cleanUp()` on each pipeline, which destroys the shader modules, descriptor sets, descriptor set layout, pipeline layout, and all cached `VkPipeline` handles.
+</Note>

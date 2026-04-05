@@ -1,0 +1,174 @@
+---
+title: "Renderer overview"
+description: "How VulkanMod's Vulkan rendering engine works and how it replaces Minecraft's default OpenGL renderer."
+---
+
+VulkanMod replaces Minecraft Java Edition's OpenGL 3.2 renderer with a purpose-built Vulkan 1.2 rendering engine. Unlike [Zink](https://docs.mesa3d.org/drivers/zink.html), which translates OpenGL calls to Vulkan at the driver level, VulkanMod is a full rewrite of the Minecraft renderer from the ground up:
+
+> "This mod isn't just 'minecraft on vulkan' (e.g: zink), it is a full rewrite of the minecraft renderer." — README.md
+
+## High-level architecture
+
+The engine is built around the standard Vulkan object hierarchy, with each layer created in strict sequence during startup.
+
+```
+VkInstance
+  └─ VkPhysicalDevice  (DeviceManager)
+       └─ VkDevice  (logical device)
+            ├─ VMA allocator
+            ├─ SwapChain  (presentation images)
+            ├─ RenderPass / Framebuffer
+            ├─ CommandPool → CommandBuffers  (one per frame-in-flight)
+            └─ Queues: graphics, present, transfer
+```
+
+The number of frames in flight is controlled by the `frameQueueSize` config option and determines how many command buffers, staging buffers, and descriptor-set pools are allocated in parallel.
+
+## Initialization sequence
+
+`VRenderSystem.initRenderer()` calls `Vulkan.initVulkan(window)`, which runs the following steps in order.
+
+<Steps>
+  <Step title="Create VkInstance">
+    Builds a `VkApplicationInfo` targeting `VK_API_VERSION_1_2` and a `VkInstanceCreateInfo` with the GLFW-required extensions. When validation layers are enabled (`ENABLE_VALIDATION_LAYERS = true`), `VK_LAYER_KHRONOS_validation` is added and an extension debug messenger is attached to the `pNext` chain.
+
+    ```java
+    appInfo.apiVersion(VK_API_VERSION_1_2);
+    // Vulkan.java:219
+    ```
+  </Step>
+
+  <Step title="Setup debug messenger">
+    When validation layers are active, a `VkDebugUtilsMessengerEXT` is registered. It prints warnings and errors to stderr, colorising error-severity messages in red.
+  </Step>
+
+  <Step title="Create window surface">
+    Calls `glfwCreateWindowSurface` to obtain a `VkSurfaceKHR` backed by the GLFW window handle.
+  </Step>
+
+  <Step title="DeviceManager.init">
+    Enumerates physical devices, selects one, and creates a `VkDevice`. Required device extensions are `VK_KHR_swapchain` (plus `VK_KHR_dynamic_rendering` when `DYNAMIC_RENDERING = true`).
+  </Step>
+
+  <Step title="Create VMA allocator">
+    Initialises the Vulkan Memory Allocator via `vmaCreateAllocator`. The allocator handle is stored statically in `Vulkan.allocator` and is the single point of entry for all GPU memory operations.
+
+    ```java
+    allocatorCreateInfo.vulkanApiVersion(VK_API_VERSION_1_2);
+    vmaCreateAllocator(allocatorCreateInfo, pAllocator);
+    // Vulkan.java:332–338
+    ```
+  </Step>
+
+  <Step title="MemoryTypes.createMemoryTypes">
+    Inspects the physical device's memory type list and selects a `DeviceLocalMemory` and a `HostCoherentMemory` instance for use throughout the engine. Falls back to mappable device memory or host-only memory on unified-memory GPUs.
+  </Step>
+
+  <Step title="Create command pool">
+    Creates a `VkCommandPool` with `VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT` on the graphics queue family.
+  </Step>
+
+  <Step title="Setup depth format">
+    Calls `DeviceManager.findDepthFormat` to choose between a 24-bit and a 32-bit depth format depending on device support and the `use24BitsDepthFormat` flag.
+  </Step>
+</Steps>
+
+After `initVulkan` returns, `Renderer.init()` is called, which:
+
+1. Creates the `MemoryManager` and per-frame `StagingBuffer` instances.
+2. Constructs the `SwapChain` and main render pass (`DefaultMainPass`).
+3. Calls `Uniforms.setupDefaultUniforms()` and `PipelineManager.init()` to compile built-in pipelines.
+4. Allocates the frame-indexed `VkCommandBuffer` and `VkCommandBuffer` transfer buffers.
+5. Creates per-frame synchronization objects: two semaphores (`imageAvailable`, `renderFinished`) and one fence (`inFlight`) for each frame slot.
+
+## Render loop
+
+Each game tick's render call flows through `Renderer`.
+
+<Steps>
+  <Step title="preInitFrame">
+    Resets per-frame draw buffers, uploads dirty chunk sections via `WorldRenderer.uploadSections()`, and submits any pending transfer-queue work.
+  </Step>
+
+  <Step title="beginFrame">
+    Waits on the current frame's in-flight fence, calls `vkAcquireNextImageKHR` to obtain a swapchain image index, begins recording the primary command buffer with `VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT`, and starts the main render pass.
+
+    ```java
+    vkWaitForFences(device, inFlightFences.get(currentFrame), true, UINT64_MAX);
+    vkAcquireNextImageKHR(device, swapChain.getId(), UINT64_MAX,
+        imageAvailableSemaphores.get(currentFrame), VK_NULL_HANDLE, pImageIndex);
+    // Renderer.java:266–283
+    ```
+  </Step>
+
+  <Step title="Game render passes">
+    Minecraft's render code runs through its normal path. Mixins redirect OpenGL-style calls (`GlStateManager`, `RenderSystem`) to `VRenderSystem` and `Renderer`, which record Vulkan commands into the active command buffer. Pipeline binding, descriptor-set uploads, and draw calls are all recorded here.
+  </Step>
+
+  <Step title="endFrame">
+    Ends the main render pass and the command buffer, then submits the command buffer to the graphics queue. The `imageAvailable` semaphore is the wait semaphore; `renderFinished` is signalled on completion.
+
+    ```java
+    vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences.get(currentFrame));
+    vkQueuePresentKHR(presentQueue, presentInfo);
+    // Renderer.java:374–389
+    ```
+  </Step>
+
+  <Step title="Present">
+    Calls `vkQueuePresentKHR` waiting on the `renderFinished` semaphore. The frame index advances modulo `framesNum`.
+  </Step>
+</Steps>
+
+Swapchain recreation (window resize, vsync toggle, `frameQueueSize` change) is handled lazily at the start of the next `beginFrame` call via the `swapChainUpdate` flag.
+
+## Fabric Mixin integration
+
+VulkanMod hooks into Minecraft through [Fabric Mixin](https://github.com/FabricMC/Mixin). The mixin categories in `vulkanmod.mixins.json` are:
+
+| Category | What it intercepts |
+|---|---|
+| `window` | `Window` creation; sets `VRenderSystem.window` before OpenGL context is created |
+| `chunk` | `LevelRenderer`, `FrustumMixin`, `SectionRenderDispatcher`, `ViewArea` — replaces vanilla chunk rendering |
+| `compatibility.gl` | `GL11`, `GL14`, `GL15`, `GL30` state calls, redirecting to `VRenderSystem` |
+| `render` | `GlStateManager`, `RenderSystem`, `GameRenderer`, `RenderType`, fog, clouds, entities, GUI, FRAPI |
+| `render.shader` | `RenderPipeline`, `ShaderManager` — intercepts Minecraft's shader loading |
+| `render.frame` | `Minecraft.runTick` and `RenderSystem` frame lifecycle |
+| `texture` | Mipmap generation, `NativeImage`, `TextureManager` uploads |
+| `matrix` | `Matrix4f`, `PoseStack` — redirects matrix uploads to `VRenderSystem` buffers |
+| `profiling` | CPU/GPU timing, debug HUD |
+
+## Key classes
+
+<CardGroup cols={2}>
+  <Card title="Vulkan" icon="bolt">
+    Static utility class. Owns the `VkInstance`, `VkSurfaceKHR`, command pool, VMA allocator handle, and per-frame `StagingBuffer` array. Entry point is `initVulkan(window)`.
+  </Card>
+  <Card title="Renderer" icon="play">
+    Singleton that drives the per-frame render loop. Owns command buffers, sync objects, the `SwapChain`, and `MainPass`. Exposes `bindGraphicsPipeline`, `uploadAndBindUBOs`, and `pushConstants`.
+  </Card>
+  <Card title="VRenderSystem" icon="sliders">
+    Static bridge replacing `GlStateManager`/`RenderSystem`. Holds CPU-side copies of MVP matrices, fog parameters, blend/depth state, and shader color. Mixins call into this class instead of OpenGL.
+  </Card>
+  <Card title="DeviceManager" icon="microchip">
+    Selects the physical device, creates the logical device, and manages the graphics, present, and transfer queues. Also stores `VkPhysicalDeviceMemoryProperties` used by `MemoryTypes`.
+  </Card>
+  <Card title="WorldRenderer" icon="globe">
+    Owns the `SectionGrid`, `SectionGraph`, `IndirectBuffer` array, and `TaskDispatcher`. Drives chunk culling and issues terrain draw calls each frame.
+  </Card>
+  <Card title="PipelineManager" icon="diagram-project">
+    Compiles and holds the built-in `GraphicsPipeline` instances: `terrain`, `terrain_earlyZ`, `blit`, and `clouds`.
+  </Card>
+</CardGroup>
+
+## VulkanMod vs. Zink
+
+| | VulkanMod | Zink |
+|---|---|---|
+| Approach | Full renderer rewrite at the Minecraft level | OpenGL-to-Vulkan translation layer in Mesa |
+| Chunk culling | Custom graph + frustum octree algorithms | Delegated to vanilla OpenGL code |
+| Shader pipeline | Vulkan `VkPipeline` objects with SPIR-V | GLSL translated by Mesa at the driver level |
+| Memory model | Explicit VMA allocation with staged uploads | Managed by Mesa/driver |
+| Minecraft integration | Fabric Mixins intercept game rendering calls | Transparent to the game; OS-level GL interception |
+
+Because VulkanMod controls the entire rendering path, it can apply Minecraft-specific optimisations — such as indirect draw, compressed terrain vertex formats, and multi-algorithm chunk culling — that a generic translation layer cannot.

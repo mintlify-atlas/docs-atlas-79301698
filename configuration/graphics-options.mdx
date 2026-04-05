@@ -1,0 +1,173 @@
+---
+title: "Graphics options"
+description: "Guide to VulkanMod's in-game graphics settings menu."
+---
+
+VulkanMod replaces Minecraft's built-in Video Settings screen with a custom menu that exposes both standard Minecraft options and VulkanMod-specific controls in a single interface.
+
+## Accessing the menu
+
+<Steps>
+  <Step title="Open the pause menu or title screen">
+    Press **Esc** in-game, or navigate to the main menu.
+  </Step>
+  <Step title="Open Options">
+    Click **Options...**.
+  </Step>
+  <Step title="Open Video Settings">
+    Click **Video Settings**. VulkanMod intercepts this and opens its own settings screen (`VOptionScreen`), replacing the vanilla UI.
+  </Step>
+</Steps>
+
+The menu is divided into four tabs: **Video**, **Graphics**, **Optimizations**, and **Other**.
+
+---
+
+## Video tab
+
+Controls display and window behavior.
+
+### Window mode
+
+<Tabs>
+  <Tab title="Windowed">
+    A standard resizable OS window. The game runs at whatever size you drag the window to. Corresponds to `windowMode: 0` in the config.
+  </Tab>
+  <Tab title="Windowed Fullscreen">
+    A borderless window that covers the full desktop at the desktop resolution and refresh rate. Lower latency overhead than exclusive fullscreen in most OS compositors. Corresponds to `windowMode: 1`.
+  </Tab>
+  <Tab title="Exclusive Fullscreen">
+    The GPU takes exclusive ownership of the display. The resolution and refresh rate are set by the **Resolution** and **Refresh Rate** options below. Corresponds to `windowMode: 2`.
+  </Tab>
+</Tabs>
+
+### Resolution and refresh rate
+
+Only active in **Exclusive Fullscreen** mode. The resolution list is populated from the monitor's GLFW-reported video modes. Changing the resolution also updates the available refresh rate options to match rates supported at that resolution.
+
+---
+
+## Graphics tab
+
+Standard Minecraft quality options plus VulkanMod's ambient occlusion extension.
+
+### Ambient occlusion
+
+VulkanMod extends Minecraft's ambient occlusion setting with a third quality tier:
+
+<AccordionGroup>
+  <Accordion title="Off">
+    Flat shading. No occlusion is calculated. Fastest option; best for very low-end hardware.
+
+    Config value: `ambientOcclusion: 0`
+  </Accordion>
+  <Accordion title="On (Smooth)">
+    Standard Minecraft smooth lighting. AO is calculated per-block face. Default behavior matches vanilla.
+
+    Config value: `ambientOcclusion: 1`
+  </Accordion>
+  <Accordion title="Sub-block">
+    Per-vertex sub-block ambient occlusion. Produces smoother gradients across block faces at the cost of additional lighting computation during chunk mesh building.
+
+    Config value: `ambientOcclusion: 2`
+
+    <Note>
+      Changing this setting triggers a full chunk re-render (`levelRenderer.allChanged()`), which may cause a brief freeze on large render distances.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Optimizations tab
+
+VulkanMod-specific rendering optimizations. All of these write to `vulkanmod_settings.json`.
+
+### Advanced culling
+
+Controls how aggressively off-screen geometry is discarded before GPU submission.
+
+<CardGroup cols={2}>
+  <Card title="Aggressive" icon="bolt">
+    `advCulling: 1`
+
+    Maximum culling. The highest performance gain, but very fast camera panning may briefly reveal geometry pop-in at the edges of the frustum.
+  </Card>
+  <Card title="Normal" icon="sliders">
+    `advCulling: 2` (default)
+
+    Balanced culling. Recommended for most systems. Provides meaningful performance improvement without visible artifacts under normal play.
+  </Card>
+  <Card title="Conservative" icon="shield">
+    `advCulling: 3`
+
+    Minimal culling. Geometry is retained longer before being discarded. Use this if you notice culling artifacts with the default setting.
+  </Card>
+  <Card title="Off" icon="x">
+    `advCulling: 10`
+
+    Disables advanced culling entirely. Closest to vanilla behavior. Only recommended for debugging.
+  </Card>
+</CardGroup>
+
+### Entity culling
+
+When enabled, entities outside the camera frustum are skipped during the render pass. On scenes with many entities (mob farms, crowded servers), this can produce a meaningful reduction in render time.
+
+- **Enabled** (`entityCulling: true`) — default; recommended.
+- **Disabled** (`entityCulling: false`) — all loaded entities are submitted to the renderer every frame.
+
+### Unique opaque layer
+
+When enabled, all opaque terrain render types are merged into a single draw layer. This cuts the number of render-pass state changes and draw calls for terrain.
+
+<Warning>
+  Disabling this setting triggers a full chunk re-render and may interact with some shader mods that expect separate terrain layers.
+</Warning>
+
+### Back-face culling
+
+When enabled, triangles whose normals face away from the camera are discarded by the GPU rasterizer before shading. This is a near-zero-cost optimization and should remain enabled in all normal use cases.
+
+### Indirect draw
+
+When enabled, VulkanMod batches draw calls using Vulkan indirect draw commands (`VK_CMD_DRAW_INDIRECT`). This shifts draw call dispatch from the CPU to the GPU, reducing per-frame CPU overhead.
+
+<Tip>
+  Indirect draw requires GPU support for `multiDrawIndirect` and `shaderDrawParameters`. VulkanMod detects support automatically — if your GPU does not support these features, the option has no effect even when enabled.
+</Tip>
+
+---
+
+## Other tab
+
+Threading and pipeline settings, plus GPU device selection.
+
+### Builder threads
+
+Number of CPU threads dedicated to chunk mesh building. Set to **Auto** (`builderThreads: 0`) to let VulkanMod choose based on available processor count. Reduce this value to leave more CPU headroom for game logic or other applications.
+
+### Frame queue size
+
+The number of frames in flight in the Vulkan swap chain. Valid range: **2–5**.
+
+| Value | Effect |
+|-------|--------|
+| `2` (default) | Lower buffering latency; GPU may occasionally stall waiting for frames to complete |
+| `3`–`4` | Increased GPU utilization; recommended if you observe frame-time spikes |
+| `5` | Maximum throughput; highest buffering latency |
+
+<Note>
+  Changing the frame queue size triggers a swap chain rebuild (`Renderer.scheduleSwapChainUpdate()`), which takes effect on the next rendered frame.
+</Note>
+
+### Texture animations
+
+When disabled, animated textures (water, lava, fire, portals, etc.) are frozen on their first frame. This reduces GPU texture upload bandwidth each tick.
+
+- Disabling texture animations can help on systems where VRAM bandwidth is the bottleneck.
+- Does not affect non-animated textures.
+
+### Device selector
+
+Selects which GPU VulkanMod uses. Set to **Auto** to use the automatic selection logic (discrete GPU preferred), or pick a specific device by index. See [GPU selection](/configuration/gpu-selection) for a full explanation.

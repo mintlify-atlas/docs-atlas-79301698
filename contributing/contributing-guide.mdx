@@ -1,0 +1,67 @@
+---
+title: "Contributing"
+description: "How to contribute to VulkanMod — issues, pull requests, and code style."
+---
+
+VulkanMod welcomes contributions. This page covers how to report bugs, request features, and submit code changes.
+
+<Warning>
+  VulkanMod is a low-level Vulkan rendering project. Contributions to the rendering backend require familiarity with the Vulkan API, SPIR-V shaders, and GPU memory management. If you are new to Vulkan, review the [Vulkan specification](https://registry.khronos.org/vulkan/) before submitting render-side changes.
+</Warning>
+
+## Reporting bugs
+
+Before opening a new issue, search existing issues to avoid duplicates.
+
+See the [reporting bugs](/troubleshooting/reporting-bugs) guide for instructions on gathering logs, system information, and reproduction steps.
+
+## Requesting features
+
+Feature requests are tracked as GitHub issues.
+
+<Steps>
+  <Step title="Check for existing requests">
+    Search the [issue tracker](https://github.com/xCollateral/VulkanMod/issues) to confirm your idea has not already been suggested.
+  </Step>
+  <Step title="Open a feature request">
+    Create a new issue using the **Feature request** template. Provide:
+    - A clear description of the feature and the problem it solves
+    - Any relevant context about your use case
+  </Step>
+</Steps>
+
+## Submitting a pull request
+
+<Steps>
+  <Step title="Fork the repository">
+    Fork [xCollateral/VulkanMod](https://github.com/xCollateral/VulkanMod) on GitHub and clone your fork locally.
+  </Step>
+  <Step title="Create a branch">
+    Create a descriptive branch for your change:
+    ```bash
+    git checkout -b fix/my-bug-description
+    ```
+  </Step>
+  <Step title="Make your changes">
+    Follow the existing code style. Build and test your changes locally before submitting:
+    ```bash
+    ./gradlew build
+    ./gradlew runClient
+    ```
+  </Step>
+  <Step title="Open a pull request">
+    Push your branch and open a pull request against the `main` branch. Describe what the change does and why, and reference any related issues.
+  </Step>
+</Steps>
+
+<Tip>
+  Keep pull requests focused on a single concern. Large, unrelated changes are harder to review and slower to merge.
+</Tip>
+
+## License
+
+VulkanMod is licensed under the **GNU Lesser General Public License v3.0 (LGPL-3.0)**. By contributing, you agree that your changes will be distributed under the same license.
+
+## Community
+
+For questions and discussion, join the VulkanMod Discord server: [discord.gg/FVXg7AYR2Q](https://discord.gg/FVXg7AYR2Q)

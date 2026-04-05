@@ -1,0 +1,129 @@
+---
+title: "Settings reference"
+description: "Complete reference for all VulkanMod configuration options stored in vulkanmod_settings.json."
+---
+
+VulkanMod persists its configuration as a JSON file at:
+
+```
+.minecraft/config/vulkanmod_settings.json
+```
+
+The file is created automatically on first launch with default values. You can edit it directly while Minecraft is closed, or change settings through the in-game menu (changes are written back to this file on apply).
+
+## Example config file
+
+```json vulkanmod_settings.json
+{
+  "videoMode": {
+    "width": 1920,
+    "height": 1080,
+    "bitDepth": 8,
+    "refreshRate": 60
+  },
+  "windowMode": 0,
+  "advCulling": 2,
+  "indirectDraw": true,
+  "uniqueOpaqueLayer": true,
+  "entityCulling": true,
+  "device": -1,
+  "ambientOcclusion": 1,
+  "frameQueueSize": 2,
+  "builderThreads": 0,
+  "backFaceCulling": true,
+  "textureAnimations": true
+}
+```
+
+## Fields
+
+### Display
+
+<ParamField path="videoMode" type="object">
+  The active video mode used in exclusive fullscreen. Populated automatically from the monitor's available modes via GLFW. Contains four sub-fields:
+
+  | Sub-field | Type | Description |
+  |-----------|------|-------------|
+  | `width` | `int` | Horizontal resolution in pixels |
+  | `height` | `int` | Vertical resolution in pixels |
+  | `bitDepth` | `int` | Color bit depth per channel (typically `8`) |
+  | `refreshRate` | `int` | Refresh rate in Hz |
+
+  On first run, defaults to the highest available resolution and refresh rate reported by the primary monitor.
+</ParamField>
+
+<ParamField path="windowMode" type="int" default="0">
+  Controls the window display mode. Maps to the `WindowMode` enum:
+
+  | Value | Mode | Description |
+  |-------|------|-------------|
+  | `0` | Windowed | Standard resizable window |
+  | `1` | Windowed Fullscreen | Borderless fullscreen at desktop resolution |
+  | `2` | Exclusive Fullscreen | Full GPU ownership of the display; uses the `videoMode` resolution and refresh rate |
+</ParamField>
+
+### Rendering
+
+<ParamField path="ambientOcclusion" type="int" default="1">
+  Controls the light smoothing mode for terrain. Maps to VulkanMod's internal `LightMode` constants:
+
+  | Value | Mode | Description |
+  |-------|------|-------------|
+  | `0` | Off (Flat) | No ambient occlusion; fastest |
+  | `1` | Smooth | Standard Minecraft smooth lighting |
+  | `2` | Sub-block | Per-vertex sub-block AO; highest quality, most expensive |
+</ParamField>
+
+<ParamField path="textureAnimations" type="boolean" default="true">
+  When `false`, animated textures (lava, water, fire, etc.) are frozen on their first frame. Disabling this can improve GPU upload bandwidth on lower-end hardware.
+</ParamField>
+
+### Culling and optimization
+
+<ParamField path="advCulling" type="int" default="2">
+  Advanced frustum culling aggressiveness. Controls how aggressively off-screen geometry is skipped before submission to the GPU.
+
+  | Value | Level | Description |
+  |-------|-------|-------------|
+  | `1` | Aggressive | Maximum culling; skips more geometry, may cause minor pop-in on fast camera movement |
+  | `2` | Normal | Balanced culling; default and recommended for most systems |
+  | `3` | Conservative | Minimal culling; geometry is retained longer before being discarded |
+  | `10` | Off | Culling disabled entirely |
+</ParamField>
+
+<ParamField path="entityCulling" type="boolean" default="true">
+  When `true`, entities outside the view frustum are skipped during rendering. Disabling this forces all loaded entities to be processed every frame regardless of visibility.
+</ParamField>
+
+<ParamField path="backFaceCulling" type="boolean" default="true">
+  When `true`, polygons whose normals face away from the camera are discarded by the GPU rasterizer. Disabling this is only useful for debugging; leave enabled for best performance.
+</ParamField>
+
+<ParamField path="uniqueOpaqueLayer" type="boolean" default="true">
+  When `true`, VulkanMod merges all opaque terrain render types into a single draw layer. This reduces draw call overhead. Disabling this restores the vanilla multi-layer behavior.
+</ParamField>
+
+<ParamField path="indirectDraw" type="boolean" default="true">
+  When `true`, VulkanMod uses GPU-side indirect draw commands (`vkCmdDrawIndirect` / `vkCmdDrawIndexedIndirect`), which reduces CPU overhead per draw call. Requires the GPU to support `multiDrawIndirect` and `shaderDrawParameters`. Falls back automatically on unsupported hardware.
+</ParamField>
+
+### Threading and pipeline
+
+<ParamField path="frameQueueSize" type="int" default="2">
+  Number of frames in flight in the Vulkan swap chain pipeline. Valid range: `2`–`5`.
+
+  - **Lower values** (e.g. `2`) reduce input latency at the cost of GPU utilization.
+  - **Higher values** (e.g. `4`–`5`) increase throughput and GPU utilization, but add buffering latency.
+
+  The default of `2` is appropriate for most systems. Increase if you observe GPU underutilization or frame-time spikes.
+</ParamField>
+
+<ParamField path="builderThreads" type="int" default="0">
+  Number of worker threads used for chunk mesh building. `0` means automatic selection based on available CPU cores (`Runtime.getRuntime().availableProcessors() - 1` is the upper bound exposed in the UI). Set a specific value to cap CPU usage from chunk building.
+</ParamField>
+
+### Device
+
+<ParamField path="device" type="int" default="-1">
+  Index into the list of suitable Vulkan devices. `-1` enables automatic selection, which prefers discrete GPUs over integrated GPUs. Set to `0`, `1`, etc. to pin a specific device from the suitable-device list. See [GPU selection](/configuration/gpu-selection) for details.
+</ParamField>

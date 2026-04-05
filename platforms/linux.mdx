@@ -1,0 +1,77 @@
+---
+title: "Linux"
+description: "Running VulkanMod on Linux with X11 or Wayland."
+---
+
+On Linux, VulkanMod reads environment variables to determine which display server is active and initializes GLFW accordingly.
+
+## Display server detection
+
+Platform.java reads `XDG_SESSION_TYPE` at startup:
+
+| `XDG_SESSION_TYPE` value | GLFW platform selected      |
+| ------------------------ | --------------------------- |
+| `wayland`                | `GLFW_PLATFORM_WAYLAND`     |
+| `x11`                    | `GLFW_PLATFORM_X11`         |
+| unset or other           | `GLFW_ANY_PLATFORM`         |
+
+The desktop environment is also read from `XDG_SESSION_DESKTOP` (preferred) or `XDG_CURRENT_DESKTOP` as a fallback. Known desktop environments checked at runtime include GNOME, Weston, and Generic.
+
+<Note>
+  Native Wayland is first-class. If `XDG_SESSION_TYPE=wayland`, VulkanMod
+  selects `GLFW_PLATFORM_WAYLAND` directly — no XWayland bridge is used.
+</Note>
+
+## Driver requirements
+
+<Tabs>
+  <Tab title="AMD (RADV)">
+    The open-source Mesa RADV driver supports Vulkan 1.3 on GCN and newer
+    hardware. Install Mesa from your distribution's package manager.
+
+    ```bash
+    # Fedora / RHEL
+    sudo dnf install mesa-vulkan-drivers
+
+    # Debian / Ubuntu
+    sudo apt install mesa-vulkan-drivers
+    ```
+  </Tab>
+  <Tab title="Intel (ANV)">
+    The open-source Mesa ANV driver supports Vulkan on Broadwell (5th-gen) and
+    newer Intel GPUs. It ships with the same Mesa package as RADV.
+  </Tab>
+  <Tab title="NVIDIA (proprietary)">
+    Use the proprietary NVIDIA driver version 510 or later for Vulkan 1.3
+    support. Avoid the open-source `nouveau` driver — it does not support Vulkan
+    at a usable level.
+  </Tab>
+</Tabs>
+
+## Multi-GPU setups
+
+On systems with an iGPU and a dGPU, the Vulkan device used by VulkanMod can be controlled in two ways:
+
+<Steps>
+  <Step title="DRI_PRIME (Mesa only)">
+    Set `DRI_PRIME=1` to force Mesa to use the secondary GPU. Launch your
+    Minecraft launcher with:
+
+    ```bash
+    DRI_PRIME=1 ./minecraft-launcher
+    ```
+  </Step>
+  <Step title="VulkanMod device index">
+    VulkanMod exposes a GPU selection option in its video settings. Set the
+    device index to match the discrete GPU listed in the menu.
+  </Step>
+</Steps>
+
+<Tip>
+  Run `vulkaninfo --summary` (from the `vulkan-tools` package) to list available
+  Vulkan devices and their indices before configuring VulkanMod.
+</Tip>
+
+## VSync
+
+VSync behavior on Linux depends on the display server. Wayland compositors enforce their own frame pacing, which may interact with VulkanMod's swapchain VSync setting. Adjust VSync in VulkanMod's video settings if you experience tearing or frame pacing issues.

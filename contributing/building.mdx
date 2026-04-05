@@ -1,0 +1,93 @@
+---
+title: "Building from source"
+description: "How to build VulkanMod from source using Gradle and Fabric Loom."
+---
+
+## Prerequisites
+
+Before building VulkanMod, ensure you have the following installed:
+
+- **JDK 21** — required by the build configuration (`sourceCompatibility = JavaVersion.VERSION_21`)
+- **Git** — to clone the repository
+
+<Note>
+  VulkanMod targets Minecraft `1.21.10` with Fabric Loader `0.17.3`. These versions are pinned in `gradle.properties` and should not need to be changed for a standard build.
+</Note>
+
+## Build steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/xCollateral/VulkanMod.git
+    cd VulkanMod
+    ```
+  </Step>
+
+  <Step title="Build the mod">
+    Run the Gradle build task to compile and package the mod JAR.
+
+    <Tabs>
+      <Tab title="Linux / macOS">
+        ```bash
+        ./gradlew build
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```batch
+        gradlew.bat build
+        ```
+      </Tab>
+    </Tabs>
+
+    The output JAR will be placed at:
+
+    ```
+    build/libs/VulkanMod_*.jar
+    ```
+
+    A sources JAR is also generated automatically alongside the main artifact.
+  </Step>
+
+  <Step title="Run the client in dev">
+    To launch Minecraft with the mod loaded in a development environment:
+
+    <Tabs>
+      <Tab title="Linux / macOS">
+        ```bash
+        ./gradlew runClient
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```batch
+        gradlew.bat runClient
+        ```
+      </Tab>
+    </Tabs>
+
+    Fabric Loom will download the correct Minecraft version and launch the game with VulkanMod active.
+  </Step>
+</Steps>
+
+## Key build properties
+
+The following values are defined in `gradle.properties` and control the build targets:
+
+| Property            | Value              | Description                        |
+| ------------------- | ------------------ | ---------------------------------- |
+| `minecraft_version` | `1.21.10`          | Target Minecraft version           |
+| `loader_version`    | `0.17.3`           | Fabric Loader version              |
+| `mod_version`       | `0.6.2-dev`        | Current mod version                |
+| `fabric_version`    | `0.138.0+1.21.10`  | Fabric API version                 |
+
+## Access widener
+
+VulkanMod uses a Fabric access widener to open up Minecraft internals required by the Vulkan renderer. The widener file is declared in `build.gradle`:
+
+```groovy
+loom {
+    accessWidenerPath = file("src/main/resources/vulkanmod.accesswidener")
+}
+```
+
+This grants the mod access to otherwise inaccessible fields and methods in Minecraft's rendering pipeline.

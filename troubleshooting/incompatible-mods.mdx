@@ -1,0 +1,50 @@
+---
+title: "Incompatible mods"
+description: "Mods known to be incompatible with VulkanMod."
+---
+
+VulkanMod replaces Minecraft's entire rendering pipeline with a Vulkan-based implementation. Any mod that hooks into OpenGL, patches Minecraft's default render pipeline, or assumes a specific rendering backend is likely to conflict.
+
+<Note>
+  The authoritative incompatible mods list is maintained on the GitHub wiki:
+  [github.com/xCollateral/VulkanMod/wiki/Incompatible-mods](https://github.com/xCollateral/VulkanMod/wiki/Incompatible-mods)
+</Note>
+
+<Tip>
+  Check the incompatible mods list before filing a bug report. Crashes or visual issues caused by an incompatible mod are not bugs in VulkanMod.
+</Tip>
+
+## Categories of incompatible mods
+
+### Shader mods
+
+| Mod | Reason |
+|-----|--------|
+| OptiFine | Hooks directly into OpenGL and patches the renderer at a low level. |
+| Iris Shaders | Designed around the OpenGL render pipeline and the Sodium renderer. |
+
+Both mods depend on OpenGL internals that VulkanMod does not expose.
+
+### Other renderer replacements
+
+Mods that replace or substantially modify the chunk renderer, entity renderer, or pipeline (such as Sodium) conflict because VulkanMod provides its own complete replacement. Only one renderer can be active at a time.
+
+### OpenGL-dependent mods
+
+Any mod that calls OpenGL directly — through LWJGL or Minecraft's `GlStateManager` — may produce rendering artifacts or crash, because VulkanMod does not run an OpenGL context.
+
+## Checking compatibility
+
+Before adding VulkanMod to an existing modpack:
+
+<Steps>
+  <Step title="Review the wiki list">
+    Open the [incompatible mods wiki page](https://github.com/xCollateral/VulkanMod/wiki/Incompatible-mods) and check every mod in your instance against the list.
+  </Step>
+  <Step title="Test with a minimal setup">
+    If you are unsure about a specific mod, test with only VulkanMod and that mod installed to isolate any conflict.
+  </Step>
+  <Step title="Report new incompatibilities">
+    If you find an unlisted incompatibility, report it on the [issue tracker](https://github.com/xCollateral/VulkanMod/issues) with logs attached so the wiki can be updated.
+  </Step>
+</Steps>

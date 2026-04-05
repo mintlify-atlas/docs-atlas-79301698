@@ -1,0 +1,94 @@
+---
+title: "Installation"
+description: "Install VulkanMod on Windows, Linux, or macOS in a few steps."
+---
+
+VulkanMod is a client-side Fabric mod. Installation follows the standard Fabric mod workflow: install the loader, download the JAR, and drop it into your mods folder.
+
+<Note>
+VulkanMod is a **client-side** mod only. It does not need to be installed on the server.
+</Note>
+
+## Prerequisites
+
+Before installing VulkanMod, make sure you have the following:
+
+- **[Fabric Loader](https://fabricmc.net/use/installer/) >= 0.14.14** — VulkanMod requires Fabric Loader, not Forge or Quilt.
+- **Java 21** — required to run the mod. The Minecraft Launcher bundles Java 21 automatically for modern versions.
+- **Minecraft 1.21.9 or 1.21.10** — these are the only supported versions.
+
+## Download
+
+Choose the source that suits your workflow. All three provide the same official builds.
+
+<CardGroup cols={2}>
+  <Card title="Modrinth" icon="cube" href="https://modrinth.com/mod/vulkanmod/versions">
+    The recommended source. Modrinth provides version filtering and checksum verification for every release.
+  </Card>
+  <Card title="CurseForge" icon="fire" href="https://www.curseforge.com/minecraft/mc-mods/vulkanmod">
+    Available on CurseForge for users who manage mods through the CurseForge app.
+  </Card>
+  <Card title="GitHub Releases" icon="github" href="https://github.com/xCollateral/VulkanMod/releases">
+    Direct JAR downloads from the source repository, including pre-release builds.
+  </Card>
+</CardGroup>
+
+## Install VulkanMod
+
+<Steps>
+  <Step title="Install Fabric Loader">
+    Download and run the [Fabric installer](https://fabricmc.net/use/installer/). Select your Minecraft version (**1.21.9** or **1.21.10**) and click **Install**.
+
+    Once complete, a new **Fabric** profile appears in the Minecraft Launcher.
+  </Step>
+  <Step title="Download the VulkanMod JAR">
+    Go to your preferred download source and grab the latest release JAR file — for example, `VulkanMod_1.21.10-0.6.2.jar`.
+
+    Make sure you download the version that matches your Minecraft version.
+  </Step>
+  <Step title="Place the JAR in your mods folder">
+    Copy the downloaded JAR into your `.minecraft/mods` directory.
+
+    <Tabs>
+      <Tab title="Windows">
+        Open **Run** (`Win + R`), type `%appdata%\.minecraft\mods`, and press Enter. Paste the JAR file there.
+      </Tab>
+      <Tab title="Linux">
+        The default mods folder is `~/.minecraft/mods`. Create it if it does not exist.
+
+        ```bash
+        mkdir -p ~/.minecraft/mods
+        cp VulkanMod_*.jar ~/.minecraft/mods/
+        ```
+      </Tab>
+      <Tab title="macOS">
+        Open Finder, press `Cmd + Shift + G`, and navigate to `~/Library/Application Support/minecraft/mods`. Paste the JAR file there.
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Launch with the Fabric profile">
+    Open the Minecraft Launcher, select the **Fabric** profile from the dropdown, and click **Play**.
+
+    VulkanMod initializes automatically on startup — no additional configuration is required.
+  </Step>
+</Steps>
+
+## Verify the installation
+
+After launching, confirm VulkanMod is active using one of these methods:
+
+**Debug screen** — Press `F3` in-game. The renderer line in the top-left should show `Vulkan` instead of `OpenGL`.
+
+**Logs** — Open `.minecraft/logs/latest.log` and search for `VulkanMod`. You should see initialization messages like:
+
+```
+[VulkanMod] == VulkanMod ==
+[VulkanMod] Selecting Platform: WIN32
+[VulkanMod] GLFW: 3.4.0 Win32 WGL EGL OSMesa
+```
+
+**Graphics settings** — Open **Options > Video Settings**. VulkanMod replaces the default settings menu with its own revamped interface.
+
+<Tip>
+If the game crashes on launch, check the [Troubleshooting FAQ](/troubleshooting/faq) or attach your log to a [GitHub issue](https://github.com/xCollateral/VulkanMod/issues).
+</Tip>

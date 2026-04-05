@@ -1,0 +1,43 @@
+---
+title: "Architecture"
+description: "Overview of VulkanMod's code structure and key subsystems."
+---
+
+VulkanMod replaces Minecraft's OpenGL rendering pipeline with a Vulkan backend. The codebase is split into several packages, each responsible for a distinct layer of the rendering stack.
+
+## Package overview
+
+| Package | Description |
+|---|---|
+| `net.vulkanmod.vulkan` | Core Vulkan context. Entry points are `Vulkan.java` (instance/device initialization), `Renderer.java` (frame lifecycle), and `VRenderSystem.java` (render state management). |
+| `net.vulkanmod.vulkan.device` | GPU device selection, physical device enumeration, and logical device management. |
+| `net.vulkanmod.vulkan.shader` | Pipeline creation, SPIR-V compilation via `lwjgl-shaderc`, and uniform buffer management. |
+| `net.vulkanmod.vulkan.memory` | GPU memory allocation using `lwjgl-vma` (Vulkan Memory Allocator). Manages buffers and staging. |
+| `net.vulkanmod.vulkan.framebuffer` | Swapchain management, render passes, and framebuffer objects. |
+| `net.vulkanmod.vulkan.queue` | Graphics, transfer, compute, and present queue abstraction and submission. |
+| `net.vulkanmod.vulkan.pass` | Render pass definitions and transitions. |
+| `net.vulkanmod.vulkan.texture` | Vulkan image and sampler management. |
+| `net.vulkanmod.render` | High-level render objects. `VBO.java` manages vertex buffer objects; `PipelineManager.java` coordinates pipeline state. |
+| `net.vulkanmod.render.chunk` | World and chunk rendering — includes the world renderer, chunk builder, and frustum/occlusion culling. |
+| `net.vulkanmod.render.shader` | Render-layer shader coordination, bridging Minecraft's shader system with the Vulkan backend. |
+| `net.vulkanmod.config` | Configuration model (`Config.java`), settings GUI, video options, platform detection (`Platform.java`), and update checking. |
+| `net.vulkanmod.mixin` | Fabric Mixin patches into Minecraft. Covers rendering, chunks, textures, windows, vertex formats, and compatibility fixes. |
+| `net.vulkanmod.gl` | OpenGL compatibility shim. Intercepts OpenGL calls from Minecraft and translates them to Vulkan equivalents, enabling mods and Minecraft internals that rely on the GL API to function. |
+
+## Mixin approach
+
+VulkanMod uses [Fabric Mixin](https://github.com/FabricMC/Mixin) to intercept and replace Minecraft's rendering internals without modifying Minecraft source code directly. Mixins are organized by subsystem under `net.vulkanmod.mixin`:
+
+- `render/` — patches to core rendering classes
+- `chunk/` — chunk building and rendering overrides
+- `texture/` — texture upload and bind interception
+- `vertex/` — vertex format and buffer patches
+- `window/` — surface and window creation hooks
+- `compatibility/` — patches for mod and platform compatibility
+- `fix/` — targeted bug fixes in Minecraft's rendering code
+
+`MixinPlugin.java` controls conditional mixin loading based on the platform and runtime environment.
+
+<Note>
+  The `net.vulkanmod.gl` shim layer allows a large portion of Minecraft's existing rendering code to continue working without full rewrites. However, performance-critical paths (chunk rendering, sky, entities) are replaced entirely with native Vulkan implementations.
+</Note>
